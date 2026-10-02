@@ -4,7 +4,7 @@
   "private": true,
   "description": "Regenerates the Material 3 colour tokens and theme.yaml of the app from one seed colour.",
   "type": "module",
-  "license": "MIT",
+  "license": "MIT-0",
   "scripts": {
     "generate": "node generate.mjs"
   },

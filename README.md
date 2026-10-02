@@ -107,4 +107,6 @@ Issues and pull requests are welcome. Please keep every screen file paste-compat
 
 ## Licence
 
-[MIT](LICENSE) © Ilja Magdenko
+[MIT No Attribution (MIT-0)](LICENSE). Use it for anything — personal, internal or commercial: copy it, change it, sell it, ship it to clients. No attribution is required and no permission is needed.
+
+The software is provided as is, without warranty of any kind.
