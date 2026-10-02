@@ -1,0 +1,1027 @@
+#  scrRefData — reference data administration.
+#
+#  HOW TO PASTE
+#    New screen → Blank, name it scrRefData, select it in the tree, Ctrl+V.
+#    App.Formulas.txt must already be pasted. The screen is not role-gated in
+#    the app; restrict who can edit reference data with Dataverse security roles.
+#
+#  Six tables, one editor. The six have different columns, and Power Fx will not
+#  let one gallery bind to tables of different shapes, so a hidden button
+#  normalises whichever table is selected into a single collection with a fixed
+#  schema. Editing patches back to the real table, looked up BY NAME — the same
+#  join the rest of the app uses. That is why Name must stay unique; an alternate
+#  key on Name in Dataverse enforces it on the server.
+#
+#  Stakeholder Categories is the one that matters. Its Colour Hex drives the
+#  timeline rows for everyone at once, so it gets a live preview, format
+#  validation, and a duplicate check on Sort Order — two categories sharing a
+#  sort order collide into one band on the printed board.
+#
+#  App-wide rules: every property value starts with "="; multi-line formulas use
+#  "|-"; a plain scalar may not contain ": "; AccessibleLabel does not exist on
+#  Classic/Button; order within Children is the z-order.
+
+Screens:
+  scrRefData:
+    Properties:
+      Fill: =RGBA(255, 255, 255, 1)
+      OnVisible: |-
+        =Set(varRefTable, Coalesce(varRefTable, "Categories"));
+        Select(btnLoadRef)
+    Children:
+
+      # ─────────── DATA LOAD ───────────
+      - btnLoadRef:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =0
+            Y: =0
+            Width: =1
+            Height: =1
+            Text: |-
+              ="load"
+            # Every branch returns the SAME six columns. Unused ones are filled
+            # with a neutral value rather than omitted, because a Switch whose
+            # branches differ in shape does not compile.
+            OnSelect: |-
+              =ClearCollect(
+                  colRef,
+                  Switch(
+                      varRefTable,
+                      "Categories",
+                      ForAll(
+                          Sort('SEL Stakeholder Categories', 'Sort Order') As C,
+                          {
+                              Name: C.Name, ColHex: C.'Colour Hex', TxtHex: C.'Text Colour Hex',
+                              Ord: C.'Sort Order', Act: C.Active = true, Extra: ""
+                          }
+                      ),
+                      "Projects",
+                      ForAll(
+                          Sort('SEL Projects', Name) As P,
+                          {
+                              Name: P.Name, ColHex: "", TxtHex: "",
+                              Ord: 0, Act: P.Active = true, Extra: P.Programme.Name
+                          }
+                      ),
+                      "Sites",
+                      ForAll(
+                          Sort('SEL Project Sites', Name) As S,
+                          {
+                              Name: S.Name, ColHex: "", TxtHex: "",
+                              Ord: 0, Act: true, Extra: S.Project.Name
+                          }
+                      ),
+                      "Programmes",
+                      ForAll(
+                          Sort('SEL Programmes', Name) As G,
+                          { Name: G.Name, ColHex: "", TxtHex: "", Ord: 0, Act: true, Extra: "" }
+                      ),
+                      "LAA",
+                      ForAll(
+                          Sort('SEL Local Authority Areas', Name) As L,
+                          { Name: L.Name, ColHex: "", TxtHex: "", Ord: 0, Act: true, Extra: "" }
+                      ),
+                      ForAll(
+                          Sort('SEL Delivery Areas', Name) As D,
+                          { Name: D.Name, ColHex: "", TxtHex: "", Ord: 0, Act: true, Extra: "" }
+                      )
+                  )
+              )
+
+      # ══════════════════ SHARED HEADER ══════════════════
+      #  Repeated per screen because the modern Header control is documented
+      #  as not replicating across screens, and a canvas component would need
+      #  a library import that YAML paste cannot perform.
+      - recHeaderR:
+          Control: Rectangle
+          Properties:
+            X: =0
+            Y: =0
+            Width: =1366
+            Height: =56
+            Fill: =ClrHeader
+
+      - lblTitleR:
+          Control: Label
+          Properties:
+            X: =20
+            Y: =0
+            Width: =600
+            Height: =56
+            Text: |-
+              ="Reference data"
+            Color: =ClrOnDark
+            Size: =TypeHeadline
+            FontWeight: =FontWeight.Semibold
+            Font: =BrandFont
+            VerticalAlign: =VerticalAlign.Middle
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            Role: =TextRole.Heading1
+
+      - lblBrandR:
+          Control: Label
+          Properties:
+            X: =640
+            Y: =0
+            Width: =320
+            Height: =56
+            Text: =BrandName
+            Color: =ClrOnDark
+            Size: =TypeTitleLg
+            FontWeight: =FontWeight.Bold
+            Font: =BrandFont
+            Align: =Align.Right
+            VerticalAlign: =VerticalAlign.Middle
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            #  PLACEHOLDER. Replace this Label with an Image of your logo; a
+            #  white version reads best on the dark header.
+
+      - btnNavTimelineR:
+          Control: Classic/Button
+          Properties:
+            X: =982
+            Y: =12
+            Width: =100
+            Height: =32
+            Text: |-
+              ="Timeline"
+            Fill: =RGBA(255, 255, 255, 1)
+            Color: =ClrText
+            BorderColor: =ClrOnDark
+            BorderThickness: =1
+            Size: =TypeLabel
+            Font: =BrandFont
+            OnSelect: =Navigate(scrTimeline, ScreenTransition.None)
+            HoverFill: =MdPrimaryContainer
+            HoverColor: =MdOnPrimaryContainer
+
+      - btnNavCalendarR:
+          Control: Classic/Button
+          Properties:
+            X: =1090
+            Y: =12
+            Width: =100
+            Height: =32
+            Text: |-
+              ="Calendar"
+            Fill: =RGBA(255, 255, 255, 1)
+            Color: =ClrText
+            BorderColor: =ClrOnDark
+            BorderThickness: =1
+            Size: =TypeLabel
+            Font: =BrandFont
+            OnSelect: =Navigate(scrCalendar, ScreenTransition.None)
+            HoverFill: =MdPrimaryContainer
+            HoverColor: =MdOnPrimaryContainer
+
+      - btnNavListR:
+          Control: Classic/Button
+          Properties:
+            X: =1198
+            Y: =12
+            Width: =100
+            Height: =32
+            Text: |-
+              ="List"
+            Fill: =RGBA(255, 255, 255, 1)
+            Color: =ClrText
+            BorderColor: =ClrOnDark
+            BorderThickness: =1
+            Size: =TypeLabel
+            Font: =BrandFont
+            OnSelect: =Navigate(scrList, ScreenTransition.None)
+            HoverFill: =MdPrimaryContainer
+            HoverColor: =MdOnPrimaryContainer
+
+      - icoSettingsR:
+          Control: Classic/Icon
+          Properties:
+            Icon: =Icon.Settings
+            X: =1310
+            Y: =14
+            Width: =28
+            Height: =28
+            Color: =ClrOnDark
+            Tooltip: |-
+              ="Reference data"
+            AccessibleLabel: |-
+              ="Reference data settings"
+            OnSelect: =Navigate(scrRefData, ScreenTransition.None)
+      # ────────────────────── TABLE PICKER ──────────────────────
+      - recRefSide:
+          Control: Rectangle
+          Properties:
+            X: =0
+            Y: =56
+            Width: =250
+            Height: =712
+            Fill: =ClrFilterBg
+
+      - lblRefWarn:
+          Control: Label
+          Properties:
+            X: =16
+            Y: =660
+            Width: =218
+            Height: =88
+            Text: |-
+              ="Changes here reach every user's board immediately. Categories set the timeline rows, their colour and their order."
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            PaddingLeft: =0
+
+      - lblRefPick:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            X: =16
+            Y: =68
+            Width: =220
+            Height: =18
+            Text: |-
+              ="Table"
+            Size: =9
+            Color: =ClrMuted
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      #  Six buttons rather than a dropdown: the current table has to be obvious
+      #  at a glance when a mistake here is visible to everyone.
+      - btnRefCategories:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =16
+            Y: =92
+            Width: =218
+            Height: =36
+            Text: |-
+              ="Stakeholder Categories"
+            Fill: |-
+              =If(varRefTable = "Categories", ClrHeader, RGBA(255, 255, 255, 1))
+            Color: |-
+              =If(varRefTable = "Categories", RGBA(255, 255, 255, 1), ClrText)
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =10
+            OnSelect: |-
+              =Set(varRefTable, "Categories");
+              Select(btnRefNew)
+
+      - btnRefProjects:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =16
+            Y: =136
+            Width: =218
+            Height: =36
+            Text: |-
+              ="Projects"
+            Fill: |-
+              =If(varRefTable = "Projects", ClrHeader, RGBA(255, 255, 255, 1))
+            Color: |-
+              =If(varRefTable = "Projects", RGBA(255, 255, 255, 1), ClrText)
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =10
+            OnSelect: |-
+              =Set(varRefTable, "Projects");
+              Select(btnRefNew)
+
+      - btnRefSites:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =16
+            Y: =180
+            Width: =218
+            Height: =36
+            Text: |-
+              ="Project Sites"
+            Fill: |-
+              =If(varRefTable = "Sites", ClrHeader, RGBA(255, 255, 255, 1))
+            Color: |-
+              =If(varRefTable = "Sites", RGBA(255, 255, 255, 1), ClrText)
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =10
+            OnSelect: |-
+              =Set(varRefTable, "Sites");
+              Select(btnRefNew)
+
+      - btnRefProgrammes:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =16
+            Y: =224
+            Width: =218
+            Height: =36
+            Text: |-
+              ="Programmes"
+            Fill: |-
+              =If(varRefTable = "Programmes", ClrHeader, RGBA(255, 255, 255, 1))
+            Color: |-
+              =If(varRefTable = "Programmes", RGBA(255, 255, 255, 1), ClrText)
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =10
+            OnSelect: |-
+              =Set(varRefTable, "Programmes");
+              Select(btnRefNew)
+
+      - btnRefLAA:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =16
+            Y: =268
+            Width: =218
+            Height: =36
+            Text: |-
+              ="Local Authority Areas"
+            Fill: |-
+              =If(varRefTable = "LAA", ClrHeader, RGBA(255, 255, 255, 1))
+            Color: |-
+              =If(varRefTable = "LAA", RGBA(255, 255, 255, 1), ClrText)
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =10
+            OnSelect: |-
+              =Set(varRefTable, "LAA");
+              Select(btnRefNew)
+
+      - btnRefDelivery:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =16
+            Y: =312
+            Width: =218
+            Height: =36
+            Text: |-
+              ="Delivery Areas"
+            Fill: |-
+              =If(varRefTable = "Delivery", ClrHeader, RGBA(255, 255, 255, 1))
+            Color: |-
+              =If(varRefTable = "Delivery", RGBA(255, 255, 255, 1), ClrText)
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =10
+            OnSelect: |-
+              =Set(varRefTable, "Delivery");
+              Select(btnRefNew)
+
+      - lblRefCount:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            X: =16
+            Y: =364
+            Width: =218
+            Height: =40
+            Text: |-
+              =CountRows(colRef) & " rows"
+            Size: =10
+            Color: =ClrMuted
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      # ────────────────────── LIST ──────────────────────
+      - galRef:
+          Control: Gallery
+          Variant: Vertical
+          Properties:
+            X: =266
+            Y: =72
+            Width: =520
+            Height: =676
+            TemplateSize: =40
+            TemplatePadding: =0
+            ShowScrollbar: =true
+            ShowNavigation: =false
+            DelayItemLoading: =true
+            AccessibleLabel: |-
+              ="Reference data rows"
+            Items: =colRef
+          Children:
+            - recRefRow:
+                Control: Rectangle
+                Properties:
+                  X: =0
+                  Y: =0
+                  Width: =Parent.TemplateWidth
+                  Height: =40
+                  Fill: |-
+                    =If(ThisItem.Name = varRefKey, RGBA(233, 243, 236, 1), RGBA(255, 255, 255, 1))
+                  BorderColor: =ClrBorder
+                  BorderThickness: =1
+
+            #  The swatch is guarded: ColorValue on a malformed hex throws and
+            #  takes the whole row's render with it, and this column is editable
+            #  by a human typing into a text box.
+            - recRefSwatch:
+                Control: Rectangle
+                Properties:
+                  Visible: |-
+                    =varRefTable = "Categories"
+                  X: =8
+                  Y: =8
+                  Width: =24
+                  Height: =24
+                  Fill: |-
+                    =If(
+                        IsMatch(ThisItem.ColHex, "^#[0-9A-Fa-f]{6}$"),
+                        ColorValue(ThisItem.ColHex),
+                        ClrDisabled
+                     )
+                  BorderColor: =ClrBorder
+                  BorderThickness: =1
+
+            - lblRefRowName:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: |-
+                    =If(varRefTable = "Categories", 40, 12)
+                  Y: =0
+                  Width: =300
+                  Height: =40
+                  Text: =ThisItem.Name
+                  Size: =11
+                  FontWeight: |-
+                    =If(ThisItem.Act, FontWeight.Semibold, FontWeight.Normal)
+                  Color: |-
+                    =If(ThisItem.Act, ClrText, ClrMuted)
+                  VerticalAlign: =VerticalAlign.Middle
+                  Wrap: =false
+                  PaddingTop: =0
+                  PaddingBottom: =0
+                  PaddingLeft: =0
+
+            - lblRefRowMeta:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =350
+                  Y: =0
+                  Width: =160
+                  Height: =40
+                  Text: |-
+                    =Switch(
+                         varRefTable,
+                         "Categories", "order " & ThisItem.Ord & If(ThisItem.Act, "", "  ·  inactive"),
+                         "Projects",   ThisItem.Extra & If(ThisItem.Act, "", "  ·  inactive"),
+                         "Sites",      ThisItem.Extra,
+                         ""
+                     )
+                  Size: =9
+                  Color: =ClrMuted
+                  Align: =Align.Right
+                  VerticalAlign: =VerticalAlign.Middle
+                  Wrap: =false
+                  PaddingTop: =0
+                  PaddingBottom: =0
+                  PaddingRight: =0
+
+            #  A transparent hit target over the whole row. Reset() is called
+            #  explicitly rather than toggling a reset variable true-then-false:
+            #  that transition happens inside one evaluation pass and does not
+            #  reliably reach the inputs.
+            - btnRefPickRow:
+                Control: Classic/Button
+                Properties:
+                  Font: =BrandFont
+                  X: =0
+                  Y: =0
+                  Width: =Parent.TemplateWidth
+                  Height: =40
+                  Text: |-
+                    =""
+                  Fill: =RGBA(0, 0, 0, 0)
+                  HoverFill: =RGBA(0, 0, 0, 0.04)
+                  PressedFill: =RGBA(0, 0, 0, 0.08)
+                  BorderThickness: =0
+                  OnSelect: |-
+                    =Set(varRefKey, ThisItem.Name);
+                    Set(varRefName, ThisItem.Name);
+                    Set(varRefCol, ThisItem.ColHex);
+                    Set(varRefTxt, ThisItem.TxtHex);
+                    Set(varRefOrd, ThisItem.Ord);
+                    Set(varRefAct, ThisItem.Act);
+                    Set(varRefExtra, ThisItem.Extra);
+                    Reset(txtRefName); Reset(txtRefCol); Reset(txtRefTxt);
+                    Reset(txtRefOrd); Reset(chkRefAct); Reset(ddRefExtra)
+
+      # ────────────────────── EDITOR ──────────────────────
+      - recRefPanel:
+          Control: Rectangle
+          Properties:
+            X: =802
+            Y: =72
+            Width: =548
+            Height: =676
+            Fill: =ClrFilterBg
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+
+      - lblRefEditTitle:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            X: =822
+            Y: =88
+            Width: =508
+            Height: =28
+            Text: |-
+              =If(IsBlank(varRefKey), "New row", "Editing: " & varRefKey)
+            Size: =14
+            FontWeight: =FontWeight.Semibold
+            Color: =ClrText
+            VerticalAlign: =VerticalAlign.Middle
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - lblRefFldName:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            X: =822
+            Y: =128
+            Width: =508
+            Height: =16
+            Text: |-
+              ="* Name"
+            Size: =9
+            Color: =ClrMuted
+            PaddingLeft: =0
+
+      - txtRefName:
+          Control: Classic/TextInput
+          Properties:
+            Font: =BrandFont
+            X: =822
+            Y: =146
+            Width: =508
+            Height: =34
+            Default: =varRefName
+            HintText: |-
+              ="Must be unique — the whole app joins on this"
+            MaxLength: =100
+
+      #  Categories only, from here down.
+      - lblRefFldCol:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            Visible: |-
+              =varRefTable = "Categories"
+            X: =822
+            Y: =192
+            Width: =300
+            Height: =16
+            Text: |-
+              ="* Row colour  (#RRGGBB)"
+            Size: =9
+            Color: =ClrMuted
+            PaddingLeft: =0
+
+      - txtRefCol:
+          Control: Classic/TextInput
+          Properties:
+            Font: =BrandFont
+            Visible: |-
+              =varRefTable = "Categories"
+            X: =822
+            Y: =210
+            Width: =300
+            Height: =34
+            Default: =varRefCol
+            HintText: |-
+              ="#B6E2E0"
+            MaxLength: =7
+
+      - recRefColPrev:
+          Control: Rectangle
+          Properties:
+            Visible: |-
+              =varRefTable = "Categories"
+            X: =1134
+            Y: =210
+            Width: =196
+            Height: =34
+            Fill: |-
+              =If(
+                  IsMatch(txtRefCol.Text, "^#[0-9A-Fa-f]{6}$"),
+                  ColorValue(txtRefCol.Text),
+                  ClrDisabled
+               )
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+
+      - lblRefColPrev:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            Visible: |-
+              =varRefTable = "Categories"
+            X: =1134
+            Y: =210
+            Width: =196
+            Height: =34
+            Text: |-
+              =If(
+                  IsMatch(txtRefCol.Text, "^#[0-9A-Fa-f]{6}$"),
+                  "Preview",
+                  "invalid hex"
+               )
+            Size: =10
+            Color: |-
+              =If(
+                  IsMatch(txtRefTxt.Text, "^#[0-9A-Fa-f]{6}$"),
+                  ColorValue(txtRefTxt.Text),
+                  ClrMuted
+               )
+            Align: =Align.Center
+            VerticalAlign: =VerticalAlign.Middle
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+
+      - lblRefFldTxt:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            Visible: |-
+              =varRefTable = "Categories"
+            X: =822
+            Y: =256
+            Width: =300
+            Height: =16
+            Text: |-
+              ="* Text colour  (#RRGGBB)"
+            Size: =9
+            Color: =ClrMuted
+            PaddingLeft: =0
+
+      - txtRefTxt:
+          Control: Classic/TextInput
+          Properties:
+            Font: =BrandFont
+            Visible: |-
+              =varRefTable = "Categories"
+            X: =822
+            Y: =274
+            Width: =300
+            Height: =34
+            Default: =varRefTxt
+            HintText: |-
+              ="#20304A"
+            MaxLength: =7
+
+      - lblRefFldOrd:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            Visible: |-
+              =varRefTable = "Categories"
+            X: =822
+            Y: =320
+            Width: =300
+            Height: =16
+            Text: |-
+              ="* Sort order  (row position on the board)"
+            Size: =9
+            Color: =ClrMuted
+            PaddingLeft: =0
+
+      - txtRefOrd:
+          Control: Classic/TextInput
+          Properties:
+            Font: =BrandFont
+            Visible: |-
+              =varRefTable = "Categories"
+            X: =822
+            Y: =338
+            Width: =300
+            Height: =34
+            Default: |-
+              =Text(varRefOrd)
+            Format: =TextFormat.Number
+            HintText: |-
+              ="10, 20, 30 — leave gaps"
+
+      - chkRefAct:
+          Control: Classic/CheckBox
+          Properties:
+            Font: =BrandFont
+            Visible: |-
+              =varRefTable = "Categories" || varRefTable = "Projects"
+            X: =822
+            Y: =384
+            Width: =508
+            Height: =32
+            Text: |-
+              ="Active — shown in filters and on the board"
+            Size: =10
+            Default: =varRefAct
+
+      #  Projects and Sites carry one lookup each. Same one-column Items shape as
+      #  the classic dropdowns in the add form: the display-column property is
+      #  not applied on paste.
+      - lblRefFldExtra:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            Visible: |-
+              =varRefTable = "Projects" || varRefTable = "Sites"
+            X: =822
+            Y: =192
+            Width: =508
+            Height: =16
+            Text: |-
+              =If(varRefTable = "Projects", "Programme", "* Project")
+            Size: =9
+            Color: =ClrMuted
+            PaddingLeft: =0
+
+      - ddRefExtra:
+          Control: Classic/DropDown
+          Properties:
+            Font: =BrandFont
+            Visible: |-
+              =varRefTable = "Projects" || varRefTable = "Sites"
+            X: =822
+            Y: =210
+            Width: =508
+            Height: =34
+            Items: |-
+              =If(
+                  varRefTable = "Projects",
+                  ForAll(Sort('SEL Programmes', Name) As R, { Value: R.Name }),
+                  ForAll(Sort(Filter('SEL Projects', Active = true), Name) As R, { Value: R.Name })
+               )
+            AllowEmptySelection: =true
+            Default: =varRefExtra
+
+      # ────────────────────── VALIDATION ──────────────────────
+      #  Duplicate Name breaks every join in the app; duplicate Sort Order puts
+      #  two categories in one printed band. Both are checked here so the editor
+      #  reports them clearly, whether or not alternate keys exist in Dataverse.
+      - lblRefValidation:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            X: =822
+            Y: =428
+            Width: =508
+            Height: =120
+            Text: |-
+              =If(IsBlank(Trim(txtRefName.Text)), "Name is required." & Char(10), "") &
+               If(
+                   !IsBlank(Trim(txtRefName.Text)) &&
+                   CountRows(Filter(colRef, Name = Trim(txtRefName.Text), Name <> varRefKey)) > 0,
+                   "That name is already used in this table." & Char(10),
+                   ""
+               ) &
+               If(
+                   varRefTable = "Categories" && !IsMatch(txtRefCol.Text, "^#[0-9A-Fa-f]{6}$"),
+                   "Row colour must look like #B6E2E0." & Char(10),
+                   ""
+               ) &
+               If(
+                   varRefTable = "Categories" && !IsMatch(txtRefTxt.Text, "^#[0-9A-Fa-f]{6}$"),
+                   "Text colour must look like #20304A." & Char(10),
+                   ""
+               ) &
+               If(
+                   varRefTable = "Categories" &&
+                   CountRows(Filter(colRef, Ord = Value(txtRefOrd.Text), Name <> varRefKey)) > 0,
+                   "Another category already uses that sort order — they would share a row." & Char(10),
+                   ""
+               ) &
+               If(
+                   varRefTable = "Sites" && IsBlank(ddRefExtra.Selected.Value),
+                   "A site must belong to a project." & Char(10),
+                   ""
+               ) &
+               If(
+                   varRefKey = "N/A",
+                   "N/A is a placeholder other records point at. Rename it and they lose their link.",
+                   ""
+               )
+            Color: =ClrRed
+            Size: =10
+            PaddingLeft: =0
+
+      # ────────────────────── ACTIONS ──────────────────────
+      - btnRefNew:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =822
+            Y: =560
+            Width: =160
+            Height: =38
+            Text: |-
+              ="+  New row"
+            Fill: =RGBA(255, 255, 255, 1)
+            Color: =ClrText
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =11
+            OnSelect: |-
+              =Set(varRefKey, "");
+              Set(varRefName, "");
+              Set(varRefCol, "#E9EDF2");
+              Set(varRefTxt, "#20304A");
+              Set(varRefOrd, Coalesce(Max(colRef, Ord), 0) + 10);
+              Set(varRefAct, true);
+              Set(varRefExtra, "");
+              Reset(txtRefName); Reset(txtRefCol); Reset(txtRefTxt);
+              Reset(txtRefOrd); Reset(chkRefAct); Reset(ddRefExtra);
+              Select(btnLoadRef)
+
+      - btnRefSave:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =996
+            Y: =560
+            Width: =160
+            Height: =38
+            Text: |-
+              ="Save"
+            Fill: =ClrAccent
+            Color: =RGBA(255, 255, 255, 1)
+            DisabledFill: =ClrDisabled
+            DisabledColor: =RGBA(255, 255, 255, 1)
+            Size: =11
+            DisplayMode: |-
+              =If(IsBlank(lblRefValidation.Text), DisplayMode.Edit, DisplayMode.Disabled)
+            #  A blank varRefKey means a new row, so the base record is Defaults().
+            #  If() rather than Coalesce(): Coalesce is for scalars, and these are
+            #  whole entity records.
+            OnSelect: |-
+              =Switch(
+                  varRefTable,
+                  "Categories",
+                  Patch(
+                      'SEL Stakeholder Categories',
+                      If(
+                          IsBlank(varRefKey),
+                          Defaults('SEL Stakeholder Categories'),
+                          LookUp('SEL Stakeholder Categories', Name = varRefKey)
+                      ),
+                      {
+                          Name: Trim(txtRefName.Text),
+                          'Colour Hex': txtRefCol.Text,
+                          'Text Colour Hex': txtRefTxt.Text,
+                          'Sort Order': Value(txtRefOrd.Text),
+                          Active: chkRefAct.Value
+                      }
+                  ),
+                  "Projects",
+                  Patch(
+                      'SEL Projects',
+                      If(
+                          IsBlank(varRefKey),
+                          Defaults('SEL Projects'),
+                          LookUp('SEL Projects', Name = varRefKey)
+                      ),
+                      {
+                          Name: Trim(txtRefName.Text),
+                          Programme: LookUp('SEL Programmes', Name = ddRefExtra.Selected.Value),
+                          Active: chkRefAct.Value
+                      }
+                  ),
+                  "Sites",
+                  Patch(
+                      'SEL Project Sites',
+                      If(
+                          IsBlank(varRefKey),
+                          Defaults('SEL Project Sites'),
+                          LookUp('SEL Project Sites', Name = varRefKey)
+                      ),
+                      {
+                          Name: Trim(txtRefName.Text),
+                          Project: LookUp('SEL Projects', Name = ddRefExtra.Selected.Value)
+                      }
+                  ),
+                  "Programmes",
+                  Patch(
+                      'SEL Programmes',
+                      If(
+                          IsBlank(varRefKey),
+                          Defaults('SEL Programmes'),
+                          LookUp('SEL Programmes', Name = varRefKey)
+                      ),
+                      { Name: Trim(txtRefName.Text) }
+                  ),
+                  "LAA",
+                  Patch(
+                      'SEL Local Authority Areas',
+                      If(
+                          IsBlank(varRefKey),
+                          Defaults('SEL Local Authority Areas'),
+                          LookUp('SEL Local Authority Areas', Name = varRefKey)
+                      ),
+                      { Name: Trim(txtRefName.Text) }
+                  ),
+                  Patch(
+                      'SEL Delivery Areas',
+                      If(
+                          IsBlank(varRefKey),
+                          Defaults('SEL Delivery Areas'),
+                          LookUp('SEL Delivery Areas', Name = varRefKey)
+                      ),
+                      { Name: Trim(txtRefName.Text) }
+                  )
+              );
+              If(
+                  IsEmpty(Errors('SEL Stakeholder Categories')) &&
+                  IsEmpty(Errors('SEL Projects')) &&
+                  IsEmpty(Errors('SEL Project Sites')),
+                  Notify("Saved", NotificationType.Success);
+                  Set(varRefKey, Trim(txtRefName.Text));
+                  Select(btnLoadRef),
+                  Notify("Save failed — check the row and try again", NotificationType.Error)
+              )
+
+      #  Deactivating beats deleting for categories and projects: a delete
+      #  orphans every activity pointing at the row, and Dataverse will refuse it
+      #  anyway once records reference it. Delete stays available for the three
+      #  plain lookups, and never for N/A.
+      - btnRefDelete:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =1170
+            Y: =560
+            Width: =160
+            Height: =38
+            Text: |-
+              =If(varConfirmDelete, "Confirm delete", "Delete")
+            Fill: |-
+              =If(varConfirmDelete, ClrToday, RGBA(255, 255, 255, 1))
+            Color: |-
+              =If(varConfirmDelete, RGBA(255, 255, 255, 1), ClrRed)
+            BorderColor: =ClrRed
+            BorderThickness: =1
+            DisabledFill: =ClrDisabled
+            DisabledColor: =ClrMuted
+            Size: =11
+            DisplayMode: |-
+              =If(
+                  IsBlank(varRefKey) || varRefKey = "N/A" ||
+                  varRefTable = "Categories" || varRefTable = "Projects",
+                  DisplayMode.Disabled,
+                  DisplayMode.Edit
+               )
+            # First press arms, second press deletes. No modal, no timer.
+            OnSelect: |-
+              =If(
+                  !varConfirmDelete,
+                  Set(varConfirmDelete, true),
+                  Switch(
+                      varRefTable,
+                      "Sites",      Remove('SEL Project Sites', LookUp('SEL Project Sites', Name = varRefKey)),
+                      "Programmes", Remove('SEL Programmes', LookUp('SEL Programmes', Name = varRefKey)),
+                      "LAA",        Remove('SEL Local Authority Areas', LookUp('SEL Local Authority Areas', Name = varRefKey)),
+                      Remove('SEL Delivery Areas', LookUp('SEL Delivery Areas', Name = varRefKey))
+                  );
+                  Set(varConfirmDelete, false);
+                  Select(btnRefNew)
+              )
+
+      - lblRefDeleteNote:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            X: =822
+            Y: =608
+            Width: =508
+            Height: =52
+            Text: |-
+              =If(
+                   varRefTable = "Categories" || varRefTable = "Projects",
+                   "Categories and projects are deactivated, not deleted — activities already point at them. Untick Active instead.",
+                   "Deleting a row that activities still reference will be refused by Dataverse."
+               )
+            Size: =9
+            Color: =ClrMuted
+            PaddingLeft: =0

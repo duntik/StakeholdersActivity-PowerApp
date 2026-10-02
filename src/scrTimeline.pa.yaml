@@ -1,0 +1,1850 @@
+#  scrTimeline — the Gantt-style lookahead board.
+#
+#  A three-month window with one row per stakeholder category and one lane per
+#  activity: diamonds for single-day activities, bars for multi-day ones, a
+#  hollow diamond when the date is TBC. Also hosts the Add New Activity form
+#  used by scrList and scrCalendar.
+#
+#  Two hidden 1x1 buttons at the origin, first in Children so the header paints
+#  over them, carry all the logic:
+#    btnLoadWindow   — the only server query, builds colWindow and colCategories
+#    btnApplyFilters — derives colVisible / colRows / the print collections
+#  They are controls and not named formulas because a named formula does not
+#  receive a collection's schema. See App.Formulas.txt for the full rule.
+#
+#  HOW TO PASTE
+#    1. Paste App.Formulas.txt into App > Formulas first (once for the whole app).
+#    2. New screen → Blank, rename it scrTimeline, select it in the tree, Ctrl+V.
+#
+#  One screen per file, which is the shape Microsoft's YAML schema expects:
+#  a single top-level object per .pa.yaml.
+#
+#  App-wide rules that bite when editing any of these files:
+#    - Every property value starts with "="; multi-line formulas use "|-".
+#    - A plain scalar may not contain ": " — record literals go in a |- block.
+#    - Order within Children is the z-order: the last element is the topmost.
+#    - AccessibleLabel does not exist on Classic/Button.
+#    - Classic dropdowns (in the add form) take one-column tables built from
+#      record literals, because the display-column property is not applied on
+#      paste. Selected is therefore Selected.Value, and the full row is re-read
+#      with LookUp where needed.
+#
+
+Screens:
+  scrTimeline:
+    Properties:
+      Fill: =RGBA(255, 255, 255, 1)
+      OnVisible: |-
+        =If(
+            IsEmpty(colWindow) || Coalesce(varMonthOffset, 0) <> Coalesce(varLoadedOffset, -9999),
+            Select(btnLoadWindow)
+         )
+    Children:
+
+      # ─────────── DATA LOAD ───────────
+      #  This hidden button owns the only server query in the app. It lives in a
+      #  control rather than a user-defined function because ClearCollect inside a
+      #  UDF does not expose the collection schema to the rest of the app.
+      - btnLoadWindow:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =0
+            Y: =0
+            Width: =1
+            Height: =1
+            # Visible stays true: Select() does not fire on a hidden control.
+            # Hidden by z-order instead: 1x1 at the origin, first in Children,
+            # so the opaque header rectangle paints over it. Negative X/Y does
+            # NOT work — Studio normalises it away on paste.
+            Text: |-
+              ="load"
+            OnSelect: |-
+              =Set(
+                  varWindowStart,
+                  DateAdd(Date(Year(Today()), Month(Today()), 1), Coalesce(varMonthOffset, 0), TimeUnit.Months)
+              );
+
+              ClearCollect(
+                  colWindow,
+                  AddColumns(
+                      Filter(
+                          'SEL Engagement Activities',
+                          'Start Date' <  DateAdd(varWindowStart, 3, TimeUnit.Months),
+                          'End Date'   >= varWindowStart
+                      ),
+                      CategoryName,  'Stakeholder Category'.Name,
+                      ProgrammeName, Programme.Name,
+                      ProjectName,   Project.Name,
+                      SiteName,      'Project Site'.Name,
+                      LAAName,       'Local Authority Area'.Name,
+                      DeliveryName,  'Delivery Area'.Name,
+                      StartD,        'Start Date',
+                      EndD,          'End Date',
+                      DayOffset,     DateDiff(varWindowStart, 'Start Date', TimeUnit.Days),
+                      BarDays,       Max(DateDiff('Start Date', 'End Date', TimeUnit.Days), 1),
+                      IsDiamond,     'End Date' = 'Start Date',
+                      CatSort,       'Stakeholder Category'.'Sort Order',
+                      CatActive,     'Stakeholder Category'.Active,
+                      DateTBC,       'Date TBC',
+                      IsRecent,      'Modified On' > DateAdd(Now(), -7, TimeUnit.Days),
+                      CreatedOn,     'Created On',
+                      MarkerHex,     If('Engagement Method' = 'SEL Engagement Methods'.'Public Event',
+                                       HexEvent, HexMeeting),
+                      LabelText,     Text('Start Date', "dd mmm") &
+                                       If('End Date' = 'Start Date',
+                                          "",
+                                          " – " & Text('End Date', "dd mmm")) &
+                                       " – " &
+                                       If(Project.Name = "N/A", "", Project.Name & ": ") & Activity,
+                      TipText,       Activity & Char(10) &
+                                       "Project: "     & Project.Name & Char(10) &
+                                       "Site: "        & 'Project Site'.Name & Char(10) &
+                                       "Stakeholder: " & 'Stakeholder Name' & Char(10) &
+                                       "Dates: "       & Text('Start Date', "dd mmm yyyy") & " – " &
+                                                         Text('End Date',   "dd mmm yyyy") & Char(10) &
+                                       "RAG: "         & Switch(
+                                                             'RAG',
+                                                             'SEL RAG Values'.Red,   "Red",
+                                                             'SEL RAG Values'.Amber, "Amber",
+                                                             'SEL RAG Values'.Green, "Green",
+                                                             "—"
+                                                         )
+                  )
+              );
+
+              // Reference data, fetched once per window load rather than in
+              // btnApplyFilters, so changing a filter or checkbox stays local.
+              ClearCollect(
+                  colCategories,
+                  Sort(Filter('SEL Stakeholder Categories', Active = true), 'Sort Order')
+              );
+
+              Set(varLoadedOffset, Coalesce(varMonthOffset, 0));
+              Select(btnApplyFilters)
+
+      # Derived collections. Separate from btnLoadWindow so that changing a
+      # filter re-derives without another server round trip.
+      - btnApplyFilters:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =0
+            Y: =0
+            Width: =1
+            Height: =1
+            Text: |-
+              ="apply"
+            OnSelect: |-
+              =ClearCollect(
+                  colFiltered,
+                  AddColumns(
+                      Filter(
+                          colWindow,
+                          IsBlank(varFProgramme)   || ProgrammeName = varFProgramme,
+                          IsBlank(varFProject)     || ProjectName   = varFProject,
+                          IsBlank(varFStakeholder) || CategoryName  = varFStakeholder,
+                          IsBlank(varFSite)        || SiteName      = varFSite,
+                          IsBlank(varFLAA)         || LAAName       = varFLAA,
+                          IsBlank(varFDelivery)    || DeliveryName  = varFDelivery
+                      ) As F,
+                      // The row a marker belongs to. A record with no category, or one
+                      // whose category was deactivated, lands in its own visible row
+                      // rather than being filtered away.
+                      RowName,
+                      If(Coalesce(F.CatActive, false), F.CategoryName, "— Uncategorised —")
+                  )
+              );
+
+              // Seq is the marker's index within its row. Every marker gets its own lane
+              // in date order — no interval packing — so lane and Seq are the same
+              // number. The comparator (StartD, then CreatedOn) matches the
+              // gallery Items sort, so Seq equals the real layout position.
+              // LabelOnLeft flips the label to the left of the marker near the right edge.
+              ClearCollect(
+                  colVisible,
+                  AddColumns(
+                      colFiltered As A,
+                      Seq,
+                      CountRows(
+                          Filter(
+                              colFiltered,
+                              RowName = A.RowName,
+                              StartD < A.StartD || (StartD = A.StartD && CreatedOn < A.CreatedOn)
+                          )
+                      ),
+                      LabelOnLeft,
+                      Max(A.DayOffset, 0) * PxPerDay +
+                          If(A.IsDiamond, 0, A.BarDays * PxPerDay) + 250 > PlotW,
+                      // The row fill comes from data, so the label colour must too —
+                      // a dark category colour would make ClrText labels unreadable.
+                      RowTextColour,
+                      Coalesce(LookUp(colCategories, Name = A.RowName, 'Text Colour Hex'), "#20304A")
+                  )
+              );
+
+              // Timeline rows: categories with their marker count.
+              // Hide Empty Area's drops rows where Cnt = 0.
+              // RowRank is the row's position in the list; Top, computed below, is the
+              // running sum of the heights above it, which is what the print screen needs.
+              ClearCollect(
+                  colRowsRaw,
+                  Filter(
+                      ForAll(
+                          colCategories As C,
+                          With(
+                              { m: Filter(colVisible, RowName = C.Name) },
+                              {
+                                  Name:       C.Name,
+                                  Colour:     C.'Colour Hex',
+                                  TextColour: C.'Text Colour Hex',
+                                  SortOrder:  C.'Sort Order',
+                                  Cnt:        CountRows(m),
+                                  Lanes:      CountRows(m)
+                              }
+                          )
+                      ),
+                      !chkHideEmpty.Value || Cnt > 0
+                  )
+              );
+
+              // Uncategorised is not a category in Dataverse, so its row is built here.
+              // Sort order 99999 keeps it at the bottom, below every real category.
+              If(
+                  CountRows(Filter(colVisible, RowName = "— Uncategorised —")) > 0,
+                  Collect(
+                      colRowsRaw,
+                      {
+                          Name:       "— Uncategorised —",
+                          Colour:     "#F7DCDD",
+                          TextColour: "#7E171C",
+                          SortOrder:  99999,
+                          Cnt:        CountRows(Filter(colVisible, RowName = "— Uncategorised —")),
+                          Lanes:      CountRows(Filter(colVisible, RowName = "— Uncategorised —"))
+                      }
+                  )
+              );
+
+              // Per-row height. Limit Area Height caps every row at three lanes;
+              // otherwise a row is exactly as tall as its own marker count needs.
+              ClearCollect(
+                  colRowsH,
+                  AddColumns(
+                      colRowsRaw As R,
+                      H,
+                      If(
+                          chkLimitHeight.Value,
+                          Max(RowMinH, 3 * LaneH + 14),
+                          Max(RowMinH, R.Cnt * LaneH + 14)
+                      )
+                  )
+              );
+
+              // Top is a running sum of the heights above, not rank * height,
+              // because rows differ in height.
+              // Coalesce because Sum over an empty table is blank, and the first
+              // row has no predecessors — blank + number would poison every
+              // marker on the print screen.
+              ClearCollect(
+                  colRows,
+                  AddColumns(
+                      colRowsH As R,
+                      RowRank,
+                      CountRows(Filter(colRowsH, SortOrder < R.SortOrder)),
+                      Top,
+                      Coalesce(Sum(Filter(colRowsH, SortOrder < R.SortOrder), H), 0)
+                  )
+              );
+
+              // ═══════════ Row height ═══════════
+              // Heights live in colRowsH above. galRows is a VariableHeight gallery, so
+              // each row is as tall as its own children — TemplateSize never has to know
+              // about ThisItem.
+              // varNoCategory counts records whose Stakeholder Category is blank or
+              // deactivated; they appear in the Uncategorised row and the counter
+              // reports them separately.
+              Set(varNoCategory, CountRows(Filter(colVisible, RowName = "— Uncategorised —")));
+
+              // A row is clipped when its lanes need more than its height allows,
+              // which only happens when Limit Area Height is on.
+              Set(varRowsClipped, CountRows(Filter(colRows, Cnt * LaneH + 14 > H)) > 0);
+              Set(varPrintTotalH, Coalesce(Sum(colRows, H), 0));
+
+              // ═══════════ Flat layout for the print screen ═══════════
+              // On scrTimeline the vertical position comes from a nested gallery. PDF export
+              // does not support nested galleries, so there Y is absolute: each row's top
+              // is the running sum (Top) computed in colRows.
+              ClearCollect(
+                  colPrintRows,
+                  ForAll(
+                      colRows As R,
+                      {
+                          Name: R.Name, Colour: R.Colour, TextColour: R.TextColour,
+                          Cnt: R.Cnt, H: R.H,
+                          Top: R.Top
+                      }
+                  )
+              );
+
+              // Markers with absolute Y. SeqAll is the running index across the whole table
+              // (not within a category, as Seq is), because on the print screen this is one
+              // flat gallery. Same comparator as the gallery Items sort: CatSort, StartD,
+              // CreatedOn.
+              ClearCollect(
+                  colPrintMarkers,
+                  ForAll(
+                      colVisible As M,
+                      {
+                          Activity: M.Activity, CategoryName: M.RowName,
+                          CatSort: M.CatSort, CreatedOn: M.CreatedOn,
+                          StartD: M.StartD, DayOffset: M.DayOffset, BarDays: M.BarDays,
+                          IsDiamond: M.IsDiamond, MarkerHex: M.MarkerHex,
+                          LabelText: M.LabelText, TipText: M.TipText,
+                          Seq: M.Seq, LabelOnLeft: M.LabelOnLeft,
+                          RowTextColour: M.RowTextColour,
+                          DateTBC: M.DateTBC, IsRecent: M.IsRecent,
+                          // Coalesce rather than a bare LookUp: if the category is deactivated
+                          // there is no row for it, LookUp returns blank, and blank + number =
+                          // number — the marker would silently land on top of the very first
+                          // category. -9999 pushes it off-canvas, where it reads as missing
+                          // rather than as belonging to the wrong row.
+                          Top: Coalesce(LookUp(colPrintRows, Name = M.RowName, Top), -9999),
+                          SeqAll: CountRows(
+                              Filter(
+                                  colVisible,
+                                  CatSort < M.CatSort ||
+                                  (CatSort = M.CatSort &&
+                                      (StartD < M.StartD ||
+                                       (StartD = M.StartD && CreatedOn < M.CreatedOn)))
+                              )
+                          )
+                      }
+                  )
+              )
+
+
+      # ══════════════════ SHARED HEADER ══════════════════
+      #  Repeated per screen because the modern Header control is documented
+      #  as not replicating across screens, and a canvas component would need
+      #  a library import that YAML paste cannot perform.
+      - recHeader:
+          Control: Rectangle
+          Properties:
+            X: =0
+            Y: =0
+            Width: =1366
+            Height: =56
+            Fill: =ClrHeader
+
+      - lblTitle:
+          Control: Label
+          Properties:
+            X: =20
+            Y: =0
+            Width: =600
+            Height: =56
+            Text: |-
+              ="Stakeholder Engagement Lookahead"
+            Color: =ClrOnDark
+            Size: =TypeHeadline
+            FontWeight: =FontWeight.Semibold
+            Font: =BrandFont
+            VerticalAlign: =VerticalAlign.Middle
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            Role: =TextRole.Heading1
+
+      - lblBrand:
+          Control: Label
+          Properties:
+            X: =640
+            Y: =0
+            Width: =320
+            Height: =56
+            Text: =BrandName
+            Color: =ClrOnDark
+            Size: =TypeTitleLg
+            FontWeight: =FontWeight.Bold
+            Font: =BrandFont
+            Align: =Align.Right
+            VerticalAlign: =VerticalAlign.Middle
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            #  PLACEHOLDER. Replace this Label with an Image of your logo; a
+            #  white version reads best on the dark header.
+
+      - btnNavTimeline:
+          Control: Classic/Button
+          Properties:
+            X: =982
+            Y: =12
+            Width: =100
+            Height: =32
+            Text: |-
+              ="Timeline"
+            Fill: =MdPrimaryContainer
+            Color: =MdOnPrimaryContainer
+            BorderColor: =ClrOnDark
+            BorderThickness: =0
+            Size: =TypeLabel
+            Font: =BrandFont
+            DisplayMode: =DisplayMode.Disabled
+            DisabledFill: =MdPrimaryContainer
+            DisabledColor: =MdOnPrimaryContainer
+
+      - btnNavCalendar:
+          Control: Classic/Button
+          Properties:
+            X: =1090
+            Y: =12
+            Width: =100
+            Height: =32
+            Text: |-
+              ="Calendar"
+            Fill: =RGBA(255, 255, 255, 1)
+            Color: =ClrText
+            BorderColor: =ClrOnDark
+            BorderThickness: =1
+            Size: =TypeLabel
+            Font: =BrandFont
+            OnSelect: =Navigate(scrCalendar, ScreenTransition.None)
+            HoverFill: =MdPrimaryContainer
+            HoverColor: =MdOnPrimaryContainer
+
+      - btnNavList:
+          Control: Classic/Button
+          Properties:
+            X: =1198
+            Y: =12
+            Width: =100
+            Height: =32
+            Text: |-
+              ="List"
+            Fill: =RGBA(255, 255, 255, 1)
+            Color: =ClrText
+            BorderColor: =ClrOnDark
+            BorderThickness: =1
+            Size: =TypeLabel
+            Font: =BrandFont
+            OnSelect: =Navigate(scrList, ScreenTransition.None)
+            HoverFill: =MdPrimaryContainer
+            HoverColor: =MdOnPrimaryContainer
+
+      - icoSettings:
+          Control: Classic/Icon
+          Properties:
+            Icon: =Icon.Settings
+            X: =1310
+            Y: =14
+            Width: =28
+            Height: =28
+            Color: =ClrOnDark
+            Tooltip: |-
+              ="Reference data"
+            AccessibleLabel: |-
+              ="Reference data settings"
+            OnSelect: =Navigate(scrRefData, ScreenTransition.None)
+      # ══════════════════ SHARED FILTER BAR ══════════════════
+      #  Identical on scrList, scrTimeline and scrCalendar. Keep the three
+      #  copies in sync when changing one.
+      #
+      #  The selection lives in GLOBAL VARIABLES, not in the controls. Reading
+      #  a control means the filter only exists on the screen that owns it —
+      #  navigate away and the same bar elsewhere would show something else.
+      #
+      #  ModernDropdown carries ItemDisplayText, which is the documented way to
+      #  choose the displayed column, so no one-column ForAll table is needed
+      #  as with a classic dropdown. Note it is an EXPRESSION: ="Name" as a
+      #  string compiles and renders every option blank.
+      - recFilterBar:
+          Control: Rectangle
+          Properties:
+            X: =0
+            Y: =56
+            Width: =1366
+            Height: =100
+            Fill: =ClrFilterBg
+
+      - lblCapProgramme:
+          Control: Label
+          Properties:
+            X: =16
+            Y: =60
+            Width: =170
+            Height: =16
+            Text: |-
+              ="Programme"
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - ddProgramme:
+          Control: ModernDropdown
+          Properties:
+            X: =16
+            Y: =78
+            Width: =170
+            Height: =32
+            Items: =Sort('SEL Programmes', Name)
+            ItemDisplayText: =ThisItem.Name
+            #  Default is a RECORD, matching Selected. Looking it up from the
+            #  shared variable is what keeps the bar in step across screens.
+            Default: |-
+              =LookUp(Sort('SEL Programmes', Name), Name = varFProgramme)
+            AccessibleLabel: |-
+              ="Programme filter"
+            OnChange: |-
+              =Set(varFProgramme, Self.Selected.Name);
+              Select(btnApplyFilters)
+
+      - lblCapProject:
+          Control: Label
+          Properties:
+            X: =194
+            Y: =60
+            Width: =170
+            Height: =16
+            Text: |-
+              ="Project"
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - ddProject:
+          Control: ModernDropdown
+          Properties:
+            X: =194
+            Y: =78
+            Width: =170
+            Height: =32
+            Items: =Sort(Filter('SEL Projects', Active = true), Name)
+            ItemDisplayText: =ThisItem.Name
+            #  Default is a RECORD, matching Selected. Looking it up from the
+            #  shared variable is what keeps the bar in step across screens.
+            Default: |-
+              =LookUp(Sort(Filter('SEL Projects', Active = true), Name), Name = varFProject)
+            AccessibleLabel: |-
+              ="Project filter"
+            OnChange: |-
+              =Set(varFProject, Self.Selected.Name);
+              Select(btnApplyFilters)
+
+      - lblCapStakeholder:
+          Control: Label
+          Properties:
+            X: =372
+            Y: =60
+            Width: =190
+            Height: =16
+            Text: |-
+              ="Stakeholder category"
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - ddStakeholder:
+          Control: ModernDropdown
+          Properties:
+            X: =372
+            Y: =78
+            Width: =190
+            Height: =32
+            Items: =Sort(Filter('SEL Stakeholder Categories', Active = true), Name)
+            ItemDisplayText: =ThisItem.Name
+            #  Default is a RECORD, matching Selected. Looking it up from the
+            #  shared variable is what keeps the bar in step across screens.
+            Default: |-
+              =LookUp(Sort(Filter('SEL Stakeholder Categories', Active = true), Name), Name = varFStakeholder)
+            AccessibleLabel: |-
+              ="Stakeholder category filter"
+            OnChange: |-
+              =Set(varFStakeholder, Self.Selected.Name);
+              Select(btnApplyFilters)
+
+      - lblCapSite:
+          Control: Label
+          Properties:
+            X: =570
+            Y: =60
+            Width: =170
+            Height: =16
+            Text: |-
+              ="Site"
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - ddSite:
+          Control: ModernDropdown
+          Properties:
+            X: =570
+            Y: =78
+            Width: =170
+            Height: =32
+            Items: =Sort('SEL Project Sites', Name)
+            ItemDisplayText: =ThisItem.Name
+            #  Default is a RECORD, matching Selected. Looking it up from the
+            #  shared variable is what keeps the bar in step across screens.
+            Default: |-
+              =LookUp(Sort('SEL Project Sites', Name), Name = varFSite)
+            AccessibleLabel: |-
+              ="Site filter"
+            OnChange: |-
+              =Set(varFSite, Self.Selected.Name);
+              Select(btnApplyFilters)
+
+      - lblCapLAA:
+          Control: Label
+          Properties:
+            X: =748
+            Y: =60
+            Width: =200
+            Height: =16
+            Text: |-
+              ="Local authority area"
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - ddLAA:
+          Control: ModernDropdown
+          Properties:
+            X: =748
+            Y: =78
+            Width: =200
+            Height: =32
+            Items: =Sort('SEL Local Authority Areas', Name)
+            ItemDisplayText: =ThisItem.Name
+            #  Default is a RECORD, matching Selected. Looking it up from the
+            #  shared variable is what keeps the bar in step across screens.
+            Default: |-
+              =LookUp(Sort('SEL Local Authority Areas', Name), Name = varFLAA)
+            AccessibleLabel: |-
+              ="Local authority area filter"
+            OnChange: |-
+              =Set(varFLAA, Self.Selected.Name);
+              Select(btnApplyFilters)
+
+      - lblCapDelivery:
+          Control: Label
+          Properties:
+            X: =956
+            Y: =60
+            Width: =170
+            Height: =16
+            Text: |-
+              ="Delivery area"
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - ddDelivery:
+          Control: ModernDropdown
+          Properties:
+            X: =956
+            Y: =78
+            Width: =170
+            Height: =32
+            Items: =Sort('SEL Delivery Areas', Name)
+            ItemDisplayText: =ThisItem.Name
+            #  Default is a RECORD, matching Selected. Looking it up from the
+            #  shared variable is what keeps the bar in step across screens.
+            Default: |-
+              =LookUp(Sort('SEL Delivery Areas', Name), Name = varFDelivery)
+            AccessibleLabel: |-
+              ="Delivery area filter"
+            OnChange: |-
+              =Set(varFDelivery, Self.Selected.Name);
+              Select(btnApplyFilters)
+
+      - btnClearFilters:
+          Control: Classic/Button
+          Properties:
+            X: =16
+            Y: =120
+            Width: =130
+            Height: =30
+            Text: |-
+              ="Clear filters"
+            Fill: =RGBA(255, 255, 255, 1)
+            Color: =ClrText
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =TypeLabel
+            Font: =BrandFont
+            #  Clearing the variables is enough: every dropdown Default reads
+            #  them, so all six bars follow without a Reset() on each control.
+            OnSelect: |-
+              =Set(varFProgramme, "");
+              Set(varFProject, "");
+              Set(varFStakeholder, "");
+              Set(varFSite, "");
+              Set(varFLAA, "");
+              Set(varFDelivery, "");
+              Select(btnApplyFilters)
+      - btnAddActivity:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =1136
+            Y: =78
+            Width: =214
+            Height: =32
+            Text: |-
+              ="+  Add New Activity"
+            Fill: =ClrAccent
+            Color: =RGBA(255, 255, 255, 1)
+            Size: =11
+            OnSelect: |-
+              =Set(varNewDate, Today());
+              Set(varAddReset, false);
+              Set(varShowAdd, true)
+
+      - chkLimitHeight:
+          Control: Classic/CheckBox
+          Properties:
+            Font: =BrandFont
+            X: =156
+            Y: =120
+            Width: =180
+            Height: =30
+            Text: |-
+              ="Limit Area Height"
+            Size: =10
+            Default: =false
+            # Classic/CheckBox has no OnChange: it exposes OnCheck and OnUncheck.
+            OnCheck: =Select(btnApplyFilters)
+            OnUncheck: =Select(btnApplyFilters)
+
+      - chkHideEmpty:
+          Control: Classic/CheckBox
+          Properties:
+            Font: =BrandFont
+            X: =346
+            Y: =120
+            Width: =190
+            Height: =30
+            Text: |-
+              ="Hide Empty Area's"
+            Size: =10
+            Default: =true
+            # Classic/CheckBox has no OnChange: it exposes OnCheck and OnUncheck.
+            OnCheck: =Select(btnApplyFilters)
+            OnUncheck: =Select(btnApplyFilters)
+
+      # Record counter plus a truncation indicator.
+      # Without it a truncated result just looks like "there is no data".
+      - lblCount:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            X: =546
+            Y: =120
+            Width: =456
+            Height: =30
+            Text: |-
+              =CountRows(colVisible) & " of " & CountRows(colWindow) & "  ·  " &
+               Text(TimelineStart, "mmm") & " – " &
+               Text(DateAdd(TimelineEnd, -1, TimeUnit.Days), "mmm yyyy") &
+               If(
+                   WindowServerCount > CountRows(colWindow),
+                   "   ⚠ loaded " & CountRows(colWindow) & " of " &
+                   WindowServerCount & " — result truncated",
+                   ""
+               ) &
+               If(
+                   varNoCategory > 0,
+                   "  ·  ⚠ " & varNoCategory & " uncategorised",
+                   ""
+               ) &
+               If(varRowsClipped, "   ⚠ rows clipped — some markers hidden", "") &
+               If(varPrintTotalH > PlotH, "  ·  scroll for more rows", "")
+            Size: =10
+            Color: |-
+              =If(
+                  WindowServerCount > CountRows(colWindow) || varNoCategory > 0,
+                  ClrToday,
+                  ClrMuted
+               )
+            VerticalAlign: =VerticalAlign.Middle
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - btnExportPdf:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =1006
+            Y: =120
+            Width: =110
+            Height: =30
+            Text: |-
+              ="Export to PDF"
+            Fill: =RGBA(255, 255, 255, 1)
+            Color: =ClrText
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =10
+            # PDF() does not support nested galleries, so printing happens on the
+            # flat scrPrint screen instead.
+            OnSelect: =Navigate(scrPrint, ScreenTransition.None)
+
+      # ─────────────────── MONTH HEADER + NAVIGATION ───────────────────
+      - btnRefresh:
+          Control: Classic/Button
+          Properties:
+            X: =1136
+            Y: =120
+            Width: =110
+            Height: =30
+            Text: |-
+              ="Refresh"
+            Fill: =RGBA(255, 255, 255, 1)
+            Color: =ClrText
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =TypeLabel
+            Font: =BrandFont
+            OnSelect: |-
+              =Refresh('SEL Engagement Activities');
+              Select(btnLoadWindow)
+
+      - icoPrevMonth:
+          Control: Classic/Icon
+          Properties:
+            Icon: =Icon.ChevronLeft
+            X: =8
+            Y: =164
+            Width: =28
+            Height: =28
+            Color: =ClrHeader
+            Tooltip: |-
+              ="Previous month"
+            AccessibleLabel: |-
+              ="Previous month"
+            OnSelect: |-
+              =Set(varMonthOffset, Coalesce(varMonthOffset, 0) - 1);
+              Select(btnLoadWindow)
+
+      - lblCatHeader:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            X: =44
+            Y: =162
+            Width: =130
+            Height: =32
+            Text: |-
+              ="Category"
+            Size: =10
+            FontWeight: =FontWeight.Semibold
+            Color: =ClrText
+            VerticalAlign: =VerticalAlign.Middle
+
+      # Month header as three labels, not a gallery: TemplateSize does not
+      # accept ThisItem, so a gallery cannot give each month its real width.
+      # Each label is positioned and sized from the actual month lengths.
+      - recMonthHeadBg:
+          Control: Rectangle
+          Properties:
+            X: =PlotX
+            Y: =162
+            Width: =PlotW
+            Height: =32
+            Fill: =ClrHeadBand
+      - lblMonth0:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            X: |-
+              =PlotX + DateDiff(TimelineStart, DateAdd(TimelineStart, 0, TimeUnit.Months), TimeUnit.Days) * PxPerDay
+            Y: =162
+            Width: |-
+              =DateDiff(
+                  DateAdd(TimelineStart, 0, TimeUnit.Months),
+                  DateAdd(TimelineStart, 1, TimeUnit.Months),
+                  TimeUnit.Days
+               ) * PxPerDay
+            Height: =32
+            Text: |-
+              =Text(DateAdd(TimelineStart, 0, TimeUnit.Months), "mmmm yyyy")
+            Size: =11
+            FontWeight: =FontWeight.Semibold
+            Color: =ClrText
+            Align: =Align.Center
+            VerticalAlign: =VerticalAlign.Middle
+      - lblMonth1:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            X: |-
+              =PlotX + DateDiff(TimelineStart, DateAdd(TimelineStart, 1, TimeUnit.Months), TimeUnit.Days) * PxPerDay
+            Y: =162
+            Width: |-
+              =DateDiff(
+                  DateAdd(TimelineStart, 1, TimeUnit.Months),
+                  DateAdd(TimelineStart, 2, TimeUnit.Months),
+                  TimeUnit.Days
+               ) * PxPerDay
+            Height: =32
+            Text: |-
+              =Text(DateAdd(TimelineStart, 1, TimeUnit.Months), "mmmm yyyy")
+            Size: =11
+            FontWeight: =FontWeight.Semibold
+            Color: =ClrText
+            Align: =Align.Center
+            VerticalAlign: =VerticalAlign.Middle
+      - recMonthHeadDiv1:
+          Control: Rectangle
+          Properties:
+            X: |-
+              =PlotX + DateDiff(TimelineStart, DateAdd(TimelineStart, 1, TimeUnit.Months), TimeUnit.Days) * PxPerDay
+            Y: =162
+            Width: =1
+            Height: =32
+            Fill: =RGBA(255, 255, 255, 1)
+      - lblMonth2:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            X: |-
+              =PlotX + DateDiff(TimelineStart, DateAdd(TimelineStart, 2, TimeUnit.Months), TimeUnit.Days) * PxPerDay
+            Y: =162
+            Width: |-
+              =DateDiff(
+                  DateAdd(TimelineStart, 2, TimeUnit.Months),
+                  DateAdd(TimelineStart, 3, TimeUnit.Months),
+                  TimeUnit.Days
+               ) * PxPerDay
+            Height: =32
+            Text: |-
+              =Text(DateAdd(TimelineStart, 2, TimeUnit.Months), "mmmm yyyy")
+            Size: =11
+            FontWeight: =FontWeight.Semibold
+            Color: =ClrText
+            Align: =Align.Center
+            VerticalAlign: =VerticalAlign.Middle
+      - recMonthHeadDiv2:
+          Control: Rectangle
+          Properties:
+            X: |-
+              =PlotX + DateDiff(TimelineStart, DateAdd(TimelineStart, 2, TimeUnit.Months), TimeUnit.Days) * PxPerDay
+            Y: =162
+            Width: =1
+            Height: =32
+            Fill: =RGBA(255, 255, 255, 1)
+      - icoNextMonth:
+          Control: Classic/Icon
+          Properties:
+            Icon: =Icon.ChevronRight
+            X: =1334
+            Y: =164
+            Width: =28
+            Height: =28
+            Color: =ClrHeader
+            Tooltip: |-
+              ="Next month"
+            AccessibleLabel: |-
+              ="Next month"
+            OnSelect: |-
+              =Set(varMonthOffset, Coalesce(varMonthOffset, 0) + 1);
+              Select(btnLoadWindow)
+
+      # ───────────────────────── TIMELINE ─────────────────────────
+      #  Bottom layer: gallery of category rows (row height from lane count).
+      #  Top layer: nested marker gallery with TemplateSize = LaneH.
+      #
+      #  The marker gallery lays itself out: TemplateSize = LaneH gives every
+      #  marker its own 24px lane, in the order Items delivers them. Children
+      #  therefore position only horizontally; their Y is a constant offset
+      #  inside the lane.
+      #
+      #  Do not use TemplateSize = 1 with a Seq * (LaneH - 1) offset term instead.
+      #  That only works if the gallery advances item k by exactly TemplateSize,
+      #  and it does not: when TemplateSize is smaller than the template content,
+      #  the platform raises the rendered row height, the offset stops matching
+      #  and the markers pile up in a narrow band.
+      - galRows:
+          Control: Gallery
+          # VariableHeight, not Vertical: rows size themselves to their content,
+          # which TemplateSize alone cannot express, since it may not read ThisItem.
+          Variant: VariableHeight
+          Properties:
+            X: =PlotX - LabelW
+            Y: =TopY
+            Width: =LabelW + PlotW
+            Height: =PlotH
+            TemplatePadding: =0
+            ShowScrollbar: =true
+            ShowNavigation: =false
+            # On: forcing every row to build its nested marker gallery in one
+            # frame is what the platform warns about.
+            DelayItemLoading: =true
+            Selectable: =false
+            AccessibleLabel: |-
+              ="Stakeholder engagement timeline by category"
+            ItemAccessibleLabel: |-
+              =ThisItem.Name & ": " & ThisItem.Cnt & " activities"
+            # The floor only. Actual height comes from the children, each of
+            # which reads ThisItem.H.
+            TemplateSize: =RowMinH
+            Items: =colRows
+          Children:
+            - recRowBg:
+                Control: Rectangle
+                Properties:
+                  X: =0
+                  Y: =0
+                  Width: =Parent.Width
+                  Height: =ThisItem.H
+                  Fill: |-
+                    =ColorValue(Coalesce(ThisItem.Colour, "#E9EDF2"))
+
+            - lblRowName:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =8
+                  Y: =0
+                  Width: =LabelW - 16
+                  Height: =ThisItem.H
+                  Text: |-
+                    =ThisItem.Name & "  (" & ThisItem.Cnt & ")"
+                  Size: =10
+                  FontWeight: =FontWeight.Semibold
+                  Color: |-
+                    =ColorValue(Coalesce(ThisItem.TextColour, "#20304A"))
+                  VerticalAlign: =VerticalAlign.Middle
+                  Wrap: =true
+                  PaddingLeft: =0
+
+            - recLabelDiv:
+                Control: Rectangle
+                Properties:
+                  X: =LabelW - 1
+                  Y: =0
+                  Width: =1
+                  Height: =ThisItem.H
+                  Fill: =ClrGrid
+
+            - recMonthSep1:
+                Control: Rectangle
+                Properties:
+                  X: |-
+                    =LabelW + DateDiff(TimelineStart, DateAdd(TimelineStart, 1, TimeUnit.Months), TimeUnit.Days) * PxPerDay
+                  Y: =0
+                  Width: =1
+                  Height: =ThisItem.H
+                  Fill: =ClrGrid
+
+            - recMonthSep2:
+                Control: Rectangle
+                Properties:
+                  X: |-
+                    =LabelW + DateDiff(TimelineStart, DateAdd(TimelineStart, 2, TimeUnit.Months), TimeUnit.Days) * PxPerDay
+                  Y: =0
+                  Width: =1
+                  Height: =ThisItem.H
+                  Fill: =ClrGrid
+
+            - recRowBottom:
+                Control: Rectangle
+                Properties:
+                  X: =0
+                  Y: =ThisItem.H - 1
+                  Width: =Parent.Width
+                  Height: =1
+                  Fill: =ClrGrid
+
+            # ── Marker layer ───────────────────────────────────────────
+            #  Height is the row height. Markers that need more lanes than the row
+            #  has are clipped; varRowsClipped in btnApplyFilters reports it.
+            #  Items are sorted by the same comparator that computes Seq.
+            - galMarkers:
+                Control: Gallery
+                Variant: Vertical
+                Properties:
+                  X: =LabelW
+                  Y: =0
+                  Width: =PlotW
+                  Height: =ThisItem.H
+                  # One lane per marker: the gallery does the vertical layout itself.
+                  TemplateSize: =LaneH
+                  TemplatePadding: =0
+                  ShowScrollbar: =false
+                  ShowNavigation: =false
+                  DelayItemLoading: =false
+                  AccessibleLabel: |-
+                    ="Activities for " & ThisItem.Name
+                  ItemAccessibleLabel: =ThisItem.TipText
+                  Items: |-
+                    =SortByColumns(
+                        Filter(colVisible, RowName = ThisItem.Name),
+                        "StartD", SortOrder.Ascending,
+                        "CreatedOn", SortOrder.Ascending
+                     )
+                Children:
+                  # bar — a multi-day activity
+                  - recBar:
+                      Control: Rectangle
+                      Properties:
+                        Visible: =!ThisItem.IsDiamond
+                        X: =Max(ThisItem.DayOffset, 0) * PxPerDay
+                        Y: =11
+                        Width: |-
+                          =Max(
+                              (ThisItem.DayOffset + ThisItem.BarDays) - Max(ThisItem.DayOffset, 0),
+                              1
+                           ) * PxPerDay
+                        Height: =10
+                        Fill: =ColorValue(ThisItem.MarkerHex)
+                        Tooltip: =ThisItem.TipText
+                        OnSelect: =Set(varSelected, ThisItem)
+
+                  # diamond — a single date (SVG: colour from data, crisp edges)
+                  - imgDiamond:
+                      Control: Image
+                      Properties:
+                        Visible: =ThisItem.IsDiamond
+                        X: =ThisItem.DayOffset * PxPerDay - 8
+                        Y: =8
+                        Width: =16
+                        Height: =16
+                        Image: |-
+                          ="data:image/svg+xml;utf8," &
+                           EncodeUrl(
+                               "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>" &
+                               "<polygon points='12,1.5 22.5,12 12,22.5 1.5,12' fill='" &
+                               If(ThisItem.DateTBC, "none", ThisItem.MarkerHex) &
+                               "' stroke='" &
+                               If(ThisItem.DateTBC, ThisItem.MarkerHex, "#FFFFFF") &
+                               "' stroke-width='" &
+                               If(ThisItem.DateTBC, 2.5, 1.2) & "'/></svg>"
+                           )
+                        Tooltip: =ThisItem.TipText
+                        OnSelect: =Set(varSelected, ThisItem)
+
+                  # Label to the right of the marker, except near the right edge of
+                  # the window where it goes to the left, otherwise the text runs
+                  # outside the plot area.
+                  - lblMarker:
+                      Control: Label
+                      Properties:
+                        Font: =BrandFont
+                        X: |-
+                          =If(
+                              ThisItem.LabelOnLeft,
+                              Max(ThisItem.DayOffset, 0) * PxPerDay - 246,
+                              Max(ThisItem.DayOffset, 0) * PxPerDay +
+                              If(
+                                  ThisItem.IsDiamond,
+                                  11,
+                                  Max(
+                                      (ThisItem.DayOffset + ThisItem.BarDays) - Max(ThisItem.DayOffset, 0),
+                                      1
+                                  ) * PxPerDay + 6
+                              )
+                           )
+                        Y: =6
+                        Width: =240
+                        Height: =20
+                        Text: =ThisItem.LabelText
+                        FontWeight: |-
+                          =If(ThisItem.IsRecent, FontWeight.Semibold, FontWeight.Normal)
+                        Size: =9
+                        Color: =ColorValue(ThisItem.RowTextColour)
+                        Align: |-
+                          =If(ThisItem.LabelOnLeft, Align.Right, Align.Left)
+                        VerticalAlign: =VerticalAlign.Middle
+                        Wrap: =false
+                        PaddingTop: =0
+                        PaddingBottom: =0
+                        PaddingLeft: =0
+                        PaddingRight: =0
+                        Tooltip: =ThisItem.TipText
+                        OnSelect: =Set(varSelected, ThisItem)
+
+      # ─────────── TODAY LINE (drawn above galRows) ───────────
+      - recToday:
+          Control: Rectangle
+          Properties:
+            Visible: |-
+              =Today() >= TimelineStart && Today() < TimelineEnd
+            X: |-
+              =PlotX + DateDiff(TimelineStart, Today(), TimeUnit.Days) * PxPerDay
+            Y: =162
+            Width: =2
+            Height: =596
+            Fill: =ClrToday
+
+      # ═══════════ ADD NEW ACTIVITY MODAL ═══════════
+
+      # dimmer behind the modal — swallows clicks on the timeline
+      - recBackdrop:
+          Control: Rectangle
+          Properties:
+            Visible: =varShowAdd
+            X: =0
+            Y: =0
+            Width: =1366
+            Height: =768
+            Fill: =RGBA(0, 0, 0, 0.45)
+
+      - cntAddActivity:
+          Control: GroupContainer
+          Variant: ManualLayout
+          Properties:
+            Visible: =varShowAdd
+            X: =233
+            Y: =44
+            Width: =900
+            Height: =680
+            Fill: =RGBA(255, 255, 255, 1)
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            DropShadow: =DropShadow.Semibold
+            LayoutMinWidth: =0
+            LayoutMinHeight: =0
+          Children:
+
+            # ───────── modal header ─────────
+            - recModalHeader:
+                Control: Rectangle
+                Properties:
+                  X: =0
+                  Y: =0
+                  Width: =900
+                  Height: =52
+                  Fill: =ClrHeader
+
+            - lblModalTitle:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =0
+                  Width: =500
+                  Height: =52
+                  Text: |-
+                    ="Add New Activity"
+                  Color: =RGBA(255, 255, 255, 1)
+                  Size: =16
+                  FontWeight: =FontWeight.Semibold
+                  VerticalAlign: =VerticalAlign.Middle
+
+            - icoModalClose:
+                Control: Classic/Icon
+                Properties:
+                  Icon: =Icon.Cancel
+                  X: =852
+                  Y: =14
+                  Width: =24
+                  Height: =24
+                  Color: =RGBA(255, 255, 255, 1)
+                  OnSelect: =Set(varShowAdd, false); Set(varAddReset, true)
+
+            # ═════════════════ LEFT COLUMN ═════════════════
+
+            - lblFldProject:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =74
+                  Width: =400
+                  Height: =16
+                  Text: |-
+                    ="* Project"
+                  Size: =9
+                  Color: =ClrMuted
+            - ddFrmProject:
+                Control: Classic/DropDown
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =92
+                  Width: =400
+                  Height: =34
+                  Items: |-
+                    =ForAll(Sort(Filter('SEL Projects', Active = true), Name) As R, { Value: R.Name })
+                  AllowEmptySelection: =true
+                  Reset: =varAddReset
+
+            - lblFldProgramme:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =134
+                  Width: =400
+                  Height: =16
+                  Text: |-
+                    ="Programme"
+                  Size: =9
+                  Color: =ClrMuted
+            - ddFrmProgramme:
+                Control: Classic/DropDown
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =152
+                  Width: =400
+                  Height: =34
+                  Items: |-
+                    =ForAll(Sort('SEL Programmes', Name) As R, { Value: R.Name })
+                  AllowEmptySelection: =true
+                  # prefilled from the selected project, still editable
+                  Default: =LookUp('SEL Projects', Name = ddFrmProject.Selected.Value).Programme.Name
+                  Reset: =varAddReset
+
+            - lblFldLAA:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =194
+                  Width: =400
+                  Height: =16
+                  Text: |-
+                    ="* Local Authority Area"
+                  Size: =9
+                  Color: =ClrMuted
+            - ddFrmLAA:
+                Control: Classic/DropDown
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =212
+                  Width: =400
+                  Height: =34
+                  Items: |-
+                    =ForAll(Sort('SEL Local Authority Areas', Name) As R, { Value: R.Name })
+                  AllowEmptySelection: =true
+                  Default: =LookUp('SEL Projects', Name = ddFrmProject.Selected.Value).'Local Authority Area'.Name
+                  Reset: =varAddReset
+
+            - lblFldStakeholderGroup:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =254
+                  Width: =400
+                  Height: =16
+                  Text: |-
+                    ="Stakeholder Group"
+                  Size: =9
+                  Color: =ClrMuted
+            - txtStakeholderGroup:
+                Control: Classic/TextInput
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =272
+                  Width: =400
+                  Height: =34
+                  Default: |-
+                    =""
+                  HintText: |-
+                    ="e.g. Local residents"
+                  Reset: =varAddReset
+
+            - lblFldDelivery:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =314
+                  Width: =400
+                  Height: =16
+                  Text: |-
+                    ="* Delivery Area"
+                  Size: =9
+                  Color: =ClrMuted
+            - ddFrmDelivery:
+                Control: Classic/DropDown
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =332
+                  Width: =400
+                  Height: =34
+                  Items: |-
+                    =ForAll(Sort('SEL Delivery Areas', Name) As R, { Value: R.Name })
+                  AllowEmptySelection: =true
+                  Reset: =varAddReset
+
+            - lblFldEngManager:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =374
+                  Width: =400
+                  Height: =16
+                  Text: |-
+                    ="Stakeholder Engagement Manager"
+                  Size: =9
+                  Color: =ClrMuted
+            - txtEngManager:
+                Control: Classic/TextInput
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =392
+                  Width: =400
+                  Height: =34
+                  Default: |-
+                    =""
+                  Reset: =varAddReset
+
+            - lblFldEndDate:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =434
+                  Width: =400
+                  Height: =16
+                  Text: |-
+                    ="* End Date"
+                  Size: =9
+                  Color: =ClrMuted
+            - dpEnd:
+                Control: Classic/DatePicker
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =452
+                  Width: =400
+                  Height: =34
+                  Format: =DateTimeFormat.ShortDate
+                  # defaults to the start date, which renders as a diamond
+                  DefaultDate: =dpStart.SelectedDate
+                  Reset: =varAddReset
+
+            - lblFldLevel:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =494
+                  Width: =400
+                  Height: =16
+                  Text: |-
+                    ="Engagement Level"
+                  Size: =9
+                  Color: =ClrMuted
+            - ddFrmLevel:
+                Control: Classic/DropDown
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =512
+                  Width: =400
+                  Height: =34
+                  Items: =Choices('SEL Engagement Activities'.'Engagement Level')
+                  AllowEmptySelection: =true
+                  Reset: =varAddReset
+
+            - lblFldRAG:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =554
+                  Width: =400
+                  Height: =16
+                  Text: |-
+                    ="RAG"
+                  Size: =9
+                  Color: =ClrMuted
+            - ddFrmRAG:
+                Control: Classic/DropDown
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =572
+                  Width: =400
+                  Height: =34
+                  Items: =Choices('SEL Engagement Activities'.RAG)
+                  AllowEmptySelection: =true
+                  Reset: =varAddReset
+
+            # ═════════════════ RIGHT COLUMN ═════════════════
+
+            - lblFldActivity:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =476
+                  Y: =74
+                  Width: =400
+                  Height: =16
+                  Text: |-
+                    ="* Activity"
+                  Size: =9
+                  Color: =ClrMuted
+            - txtActivity:
+                Control: Classic/TextInput
+                Properties:
+                  Font: =BrandFont
+                  X: =476
+                  Y: =92
+                  Width: =400
+                  Height: =34
+                  Default: |-
+                    =""
+                  HintText: |-
+                    ="e.g. Community liaison group meeting - Site A1"
+                  MaxLength: =250
+                  Reset: =varAddReset
+
+            - lblFldSite:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =476
+                  Y: =134
+                  Width: =400
+                  Height: =16
+                  Text: |-
+                    ="* Project Site"
+                  Size: =9
+                  Color: =ClrMuted
+            - ddFrmSite:
+                Control: Classic/DropDown
+                Properties:
+                  Font: =BrandFont
+                  X: =476
+                  Y: =152
+                  Width: =400
+                  Height: =34
+                  # Cascade: until a project is picked, show every site.
+                  # Compared by name, not by record: a Dataverse lookup column and a
+                  # dropdown Selected record are different types and '=' rejects them.
+                  # This filters on a related table column, which is NOT delegable — it
+                  # caps at the data row limit. Acceptable: Project Sites is a small
+                  # reference table. Revisit if it ever passes 500 rows.
+                  Items: |-
+                    =If(
+                        IsBlank(ddFrmProject.Selected.Value),
+                        ForAll(Sort('SEL Project Sites', Name) As R, { Value: R.Name }),
+                        ForAll(Sort(Filter('SEL Project Sites', Project.Name = ddFrmProject.Selected.Value), Name) As R, { Value: R.Name })
+                     )
+                  AllowEmptySelection: =true
+                  Reset: =varAddReset
+
+            - lblFldCategory:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =476
+                  Y: =194
+                  Width: =400
+                  Height: =16
+                  Text: |-
+                    ="* Stakeholder Category"
+                  Size: =9
+                  Color: =ClrMuted
+            - ddFrmCategory:
+                Control: Classic/DropDown
+                Properties:
+                  Font: =BrandFont
+                  X: =476
+                  Y: =212
+                  Width: =400
+                  Height: =34
+                  Items: |-
+                    =ForAll(Sort(Filter('SEL Stakeholder Categories', Active = true), 'Sort Order') As R, { Value: R.Name })
+                  AllowEmptySelection: =true
+                  Reset: =varAddReset
+
+            - lblFldStakeholderName:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =476
+                  Y: =254
+                  Width: =400
+                  Height: =16
+                  Text: |-
+                    ="* Stakeholder Name/Group"
+                  Size: =9
+                  Color: =ClrMuted
+            - txtStakeholderName:
+                Control: Classic/TextInput
+                Properties:
+                  Font: =BrandFont
+                  X: =476
+                  Y: =272
+                  Width: =400
+                  Height: =34
+                  Default: |-
+                    =""
+                  Reset: =varAddReset
+
+            - lblFldLead:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =476
+                  Y: =314
+                  Width: =400
+                  Height: =16
+                  Text: |-
+                    ="* Engagement Lead"
+                  Size: =9
+                  Color: =ClrMuted
+            - cmbLead:
+                Control: Classic/ComboBox
+                Properties:
+                  Font: =BrandFont
+                  X: =476
+                  Y: =332
+                  Width: =400
+                  Height: =34
+                  Items: =Users
+                  IsSearchable: =true
+                  SelectMultiple: =false
+                  SearchFields: |-
+                    =["fullname"]
+                  DisplayFields: |-
+                    =["fullname"]
+                  Reset: =varAddReset
+
+            - lblFldStartDate:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =476
+                  Y: =374
+                  Width: =400
+                  Height: =16
+                  Text: |-
+                    ="* Start Date"
+                  Size: =9
+                  Color: =ClrMuted
+            - dpStart:
+                Control: Classic/DatePicker
+                Properties:
+                  Font: =BrandFont
+                  X: =476
+                  Y: =392
+                  Width: =400
+                  Height: =34
+                  Format: =DateTimeFormat.ShortDate
+                  # varNewDate carries the day a calendar cell was clicked; plain
+                  # Add New Activity sets it to today.
+                  DefaultDate: =Coalesce(varNewDate, Today())
+                  Reset: =varAddReset
+
+            - lblFldMethod:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =476
+                  Y: =434
+                  Width: =400
+                  Height: =16
+                  Text: |-
+                    ="* Engagement Method"
+                  Size: =9
+                  Color: =ClrMuted
+            - ddFrmMethod:
+                Control: Classic/DropDown
+                Properties:
+                  Font: =BrandFont
+                  X: =476
+                  Y: =452
+                  Width: =400
+                  Height: =34
+                  Items: =Choices('SEL Engagement Activities'.'Engagement Method')
+                  AllowEmptySelection: =true
+                  Reset: =varAddReset
+
+            - lblFldPhase:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =476
+                  Y: =494
+                  Width: =400
+                  Height: =16
+                  Text: |-
+                    ="Engagement Phase"
+                  Size: =9
+                  Color: =ClrMuted
+            - ddFrmPhase:
+                Control: Classic/DropDown
+                Properties:
+                  Font: =BrandFont
+                  X: =476
+                  Y: =512
+                  Width: =400
+                  Height: =34
+                  Items: =Choices('SEL Engagement Activities'.'Engagement Phase')
+                  AllowEmptySelection: =true
+                  Reset: =varAddReset
+
+            # Date TBC marks an unconfirmed date. Marker colour comes from
+            # Engagement Method; a TBC marker is drawn as a hollow diamond
+            # instead of a filled one.
+            - lblFldDateTBC:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =476
+                  Y: =554
+                  Width: =400
+                  Height: =16
+                  Text: |-
+                    ="Date confidence"
+                  Size: =9
+                  Color: =ClrMuted
+            - chkDateTBC:
+                Control: Classic/CheckBox
+                Properties:
+                  Font: =BrandFont
+                  X: =476
+                  Y: =572
+                  Width: =400
+                  Height: =34
+                  Text: |-
+                    ="Date is not yet confirmed (TBC)"
+                  Size: =10
+                  Default: =false
+                  Reset: =varAddReset
+
+            # ═════════════════ VALIDATION AND BUTTONS ═════════════════
+
+            - lblValidation:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =24
+                  Y: =620
+                  Width: =580
+                  Height: =36
+                  Text: |-
+                    =If(
+                        dpEnd.SelectedDate < dpStart.SelectedDate,
+                        "End Date cannot be earlier than Start Date",
+                        ""
+                     )
+                  Color: =ClrRed
+                  Size: =10
+                  VerticalAlign: =VerticalAlign.Middle
+
+            - btnModalClose:
+                Control: Classic/Button
+                Properties:
+                  Font: =BrandFont
+                  X: =620
+                  Y: =620
+                  Width: =110
+                  Height: =36
+                  Text: |-
+                    ="Close"
+                  Fill: =RGBA(255, 255, 255, 1)
+                  Color: =ClrText
+                  BorderColor: =ClrBorder
+                  BorderThickness: =1
+                  OnSelect: =Set(varShowAdd, false); Set(varAddReset, true)
+
+            - btnSubmit:
+                Control: Classic/Button
+                Properties:
+                  Font: =BrandFont
+                  X: =746
+                  Y: =620
+                  Width: =130
+                  Height: =36
+                  Text: |-
+                    ="Submit"
+                  Fill: =ClrHeader
+                  Color: =RGBA(255, 255, 255, 1)
+                  DisabledFill: =ClrDisabled
+                  DisabledColor: =RGBA(255, 255, 255, 1)
+                  # enabled only when every required field is filled
+                  DisplayMode: |-
+                    =If(
+                        !IsBlank(txtActivity.Text)
+                        && !IsBlank(ddFrmProject.Selected.Value)
+                        && !IsBlank(ddFrmSite.Selected.Value)
+                        && !IsBlank(ddFrmCategory.Selected.Value)
+                        && !IsBlank(txtStakeholderName.Text)
+                        && !IsBlank(ddFrmLAA.Selected.Value)
+                        && !IsBlank(ddFrmDelivery.Selected.Value)
+                        && !IsBlank(cmbLead.Selected.'Full Name')
+                        && !IsBlank(dpStart.SelectedDate)
+                        && !IsBlank(dpEnd.SelectedDate)
+                        && !IsBlank(ddFrmMethod.Selected.Value)
+                        && dpEnd.SelectedDate >= dpStart.SelectedDate,
+                        DisplayMode.Edit,
+                        DisplayMode.Disabled
+                     )
+                  OnSelect: |-
+                    =Patch(
+                        'SEL Engagement Activities',
+                        Defaults('SEL Engagement Activities'),
+                        {
+                            Activity:               txtActivity.Text,
+                            Project:                LookUp('SEL Projects', Name = ddFrmProject.Selected.Value),
+                            Programme:              LookUp('SEL Programmes', Name = ddFrmProgramme.Selected.Value),
+                            'Project Site':         LookUp('SEL Project Sites', Name = ddFrmSite.Selected.Value),
+                            'Stakeholder Category': LookUp('SEL Stakeholder Categories', Name = ddFrmCategory.Selected.Value),
+                            'Stakeholder Name':     txtStakeholderName.Text,
+                            'Stakeholder Group':    txtStakeholderGroup.Text,
+                            'Local Authority Area': LookUp('SEL Local Authority Areas', Name = ddFrmLAA.Selected.Value),
+                            'Delivery Area':        LookUp('SEL Delivery Areas', Name = ddFrmDelivery.Selected.Value),
+                            'Engagement Lead':      cmbLead.Selected,
+                            'Engagement Manager':   txtEngManager.Text,
+                            'Start Date':           dpStart.SelectedDate,
+                            'End Date':             dpEnd.SelectedDate,
+                            'Engagement Level':     ddFrmLevel.Selected.Value,
+                            'Engagement Method':    ddFrmMethod.Selected.Value,
+                            'Engagement Phase':     ddFrmPhase.Selected.Value,
+                            RAG:                    ddFrmRAG.Selected.Value,
+                            'Date TBC':             chkDateTBC.Value
+                        }
+                     );
+                     If(
+                        IsEmpty(Errors('SEL Engagement Activities')),
+                        Notify("Activity added", NotificationType.Success);
+                        Set(varShowAdd, false);
+                        Set(varAddReset, true);
+                        Select(btnLoadWindow),
+                        Notify(
+                            First(Errors('SEL Engagement Activities')).Message,
+                            NotificationType.Error
+                        )
+                     )

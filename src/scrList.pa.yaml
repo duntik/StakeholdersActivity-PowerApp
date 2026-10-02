@@ -1,0 +1,710 @@
+#  scrList — the activity register (start screen).
+#
+#  A modern Data Grid over SEL Engagement Activities, with five preset views,
+#  a search box, the shared filter bar and a record counter.
+#
+#  HOW TO PASTE
+#    1. Settings → Updates → make sure "Modern controls and themes" is ON,
+#       otherwise ModernDataGrid does not exist and the paste fails.
+#    2. Paste App.Formulas.txt into App > Formulas first (once for the app).
+#    3. New screen → Blank, rename it scrList, select it in the tree, Ctrl+V.
+#
+#  THE APP STARTS HERE. Set App.StartScreen to =scrList: this screen is the hub
+#  every other one is reached from, and it does not depend on collections
+#  built on other screens.
+#
+#  The grid queries Dataverse DIRECTLY — no ClearCollect. Collecting the
+#  activity table would cap it at the data row limit and silently lose
+#  everything past it. The timeline's colWindow accepts that limit only because
+#  its three-month window is small.
+#
+#  Most predicates below are delegable: equality, IsBlank, StartsWith and date
+#  comparison are all on Dataverse's delegable list. ONE is not — the
+#  My activities preset compares a RELATED column (Engagement Lead.Full Name),
+#  which Dataverse cannot delegate, so that view alone caps at the data row
+#  limit. Comparing the lookup itself would delegate, but a lookup column and
+#  a LookUp(Users, ...) record are different record types and '=' rejects
+#  them. The preset switches are written as `varListPreset <> "x" || <predicate>` rather than If(), because a
+#  constant comparison folds away and leaves a delegable expression behind.
+#
+#  Order within Children is the z-order: the last element is the topmost.
+
+Screens:
+  scrList:
+    Properties:
+      Fill: =RGBA(255, 255, 255, 1)
+      OnVisible: |-
+        =Set(varListPreset, Coalesce(varListPreset, "90"))
+    Children:
+
+      # ══════════════════ SHARED HEADER ══════════════════
+      #  Repeated per screen because the modern Header control is documented
+      #  as not replicating across screens, and a canvas component would need
+      #  a library import that YAML paste cannot perform.
+      - recHeaderL:
+          Control: Rectangle
+          Properties:
+            X: =0
+            Y: =0
+            Width: =1366
+            Height: =56
+            Fill: =ClrHeader
+
+      - lblTitleL:
+          Control: Label
+          Properties:
+            X: =20
+            Y: =0
+            Width: =600
+            Height: =56
+            Text: |-
+              ="Engagement Activities"
+            Color: =ClrOnDark
+            Size: =TypeHeadline
+            FontWeight: =FontWeight.Semibold
+            Font: =BrandFont
+            VerticalAlign: =VerticalAlign.Middle
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            Role: =TextRole.Heading1
+
+      - lblBrandL:
+          Control: Label
+          Properties:
+            X: =640
+            Y: =0
+            Width: =320
+            Height: =56
+            Text: =BrandName
+            Color: =ClrOnDark
+            Size: =TypeTitleLg
+            FontWeight: =FontWeight.Bold
+            Font: =BrandFont
+            Align: =Align.Right
+            VerticalAlign: =VerticalAlign.Middle
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            #  PLACEHOLDER. Replace this Label with an Image of your logo; a
+            #  white version reads best on the dark header.
+
+      - btnNavTimelineL:
+          Control: Classic/Button
+          Properties:
+            X: =982
+            Y: =12
+            Width: =100
+            Height: =32
+            Text: |-
+              ="Timeline"
+            Fill: =RGBA(255, 255, 255, 1)
+            Color: =ClrText
+            BorderColor: =ClrOnDark
+            BorderThickness: =1
+            Size: =TypeLabel
+            Font: =BrandFont
+            OnSelect: =Navigate(scrTimeline, ScreenTransition.None)
+            HoverFill: =MdPrimaryContainer
+            HoverColor: =MdOnPrimaryContainer
+
+      - btnNavCalendarL:
+          Control: Classic/Button
+          Properties:
+            X: =1090
+            Y: =12
+            Width: =100
+            Height: =32
+            Text: |-
+              ="Calendar"
+            Fill: =RGBA(255, 255, 255, 1)
+            Color: =ClrText
+            BorderColor: =ClrOnDark
+            BorderThickness: =1
+            Size: =TypeLabel
+            Font: =BrandFont
+            OnSelect: =Navigate(scrCalendar, ScreenTransition.None)
+            HoverFill: =MdPrimaryContainer
+            HoverColor: =MdOnPrimaryContainer
+
+      - btnNavListL:
+          Control: Classic/Button
+          Properties:
+            X: =1198
+            Y: =12
+            Width: =100
+            Height: =32
+            Text: |-
+              ="List"
+            Fill: =MdPrimaryContainer
+            Color: =MdOnPrimaryContainer
+            BorderColor: =ClrOnDark
+            BorderThickness: =0
+            Size: =TypeLabel
+            Font: =BrandFont
+            DisplayMode: =DisplayMode.Disabled
+            DisabledFill: =MdPrimaryContainer
+            DisabledColor: =MdOnPrimaryContainer
+
+      - icoSettingsL:
+          Control: Classic/Icon
+          Properties:
+            Icon: =Icon.Settings
+            X: =1310
+            Y: =14
+            Width: =28
+            Height: =28
+            Color: =ClrOnDark
+            Tooltip: |-
+              ="Reference data"
+            AccessibleLabel: |-
+              ="Reference data settings"
+            OnSelect: =Navigate(scrRefData, ScreenTransition.None)
+      # ══════════════════ SHARED FILTER BAR ══════════════════
+      #  Identical on scrList, scrTimeline and scrCalendar. Keep the three
+      #  copies in sync when changing one.
+      #
+      #  The selection lives in GLOBAL VARIABLES, not in the controls. Reading
+      #  a control means the filter only exists on the screen that owns it —
+      #  navigate away and the same bar elsewhere would show something else.
+      #
+      #  ModernDropdown carries ItemDisplayText, which is the documented way to
+      #  choose the displayed column, so no one-column ForAll table is needed
+      #  as with a classic dropdown. Note it is an EXPRESSION: ="Name" as a
+      #  string compiles and renders every option blank.
+      - recFilterBarL:
+          Control: Rectangle
+          Properties:
+            X: =0
+            Y: =56
+            Width: =1366
+            Height: =100
+            Fill: =ClrFilterBg
+
+      - lblCapProgrammeL:
+          Control: Label
+          Properties:
+            X: =16
+            Y: =60
+            Width: =170
+            Height: =16
+            Text: |-
+              ="Programme"
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - ddProgrammeL:
+          Control: ModernDropdown
+          Properties:
+            X: =16
+            Y: =78
+            Width: =170
+            Height: =32
+            Items: =Sort('SEL Programmes', Name)
+            ItemDisplayText: =ThisItem.Name
+            #  Default is a RECORD, matching Selected. Looking it up from the
+            #  shared variable is what keeps the bar in step across screens.
+            Default: |-
+              =LookUp(Sort('SEL Programmes', Name), Name = varFProgramme)
+            AccessibleLabel: |-
+              ="Programme filter"
+            OnChange: |-
+              =Set(varFProgramme, Self.Selected.Name);
+
+      - lblCapProjectL:
+          Control: Label
+          Properties:
+            X: =194
+            Y: =60
+            Width: =170
+            Height: =16
+            Text: |-
+              ="Project"
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - ddProjectL:
+          Control: ModernDropdown
+          Properties:
+            X: =194
+            Y: =78
+            Width: =170
+            Height: =32
+            Items: =Sort(Filter('SEL Projects', Active = true), Name)
+            ItemDisplayText: =ThisItem.Name
+            #  Default is a RECORD, matching Selected. Looking it up from the
+            #  shared variable is what keeps the bar in step across screens.
+            Default: |-
+              =LookUp(Sort(Filter('SEL Projects', Active = true), Name), Name = varFProject)
+            AccessibleLabel: |-
+              ="Project filter"
+            OnChange: |-
+              =Set(varFProject, Self.Selected.Name);
+
+      - lblCapStakeholderL:
+          Control: Label
+          Properties:
+            X: =372
+            Y: =60
+            Width: =190
+            Height: =16
+            Text: |-
+              ="Stakeholder category"
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - ddStakeholderL:
+          Control: ModernDropdown
+          Properties:
+            X: =372
+            Y: =78
+            Width: =190
+            Height: =32
+            Items: =Sort(Filter('SEL Stakeholder Categories', Active = true), Name)
+            ItemDisplayText: =ThisItem.Name
+            #  Default is a RECORD, matching Selected. Looking it up from the
+            #  shared variable is what keeps the bar in step across screens.
+            Default: |-
+              =LookUp(Sort(Filter('SEL Stakeholder Categories', Active = true), Name), Name = varFStakeholder)
+            AccessibleLabel: |-
+              ="Stakeholder category filter"
+            OnChange: |-
+              =Set(varFStakeholder, Self.Selected.Name);
+
+      - lblCapSiteL:
+          Control: Label
+          Properties:
+            X: =570
+            Y: =60
+            Width: =170
+            Height: =16
+            Text: |-
+              ="Site"
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - ddSiteL:
+          Control: ModernDropdown
+          Properties:
+            X: =570
+            Y: =78
+            Width: =170
+            Height: =32
+            Items: =Sort('SEL Project Sites', Name)
+            ItemDisplayText: =ThisItem.Name
+            #  Default is a RECORD, matching Selected. Looking it up from the
+            #  shared variable is what keeps the bar in step across screens.
+            Default: |-
+              =LookUp(Sort('SEL Project Sites', Name), Name = varFSite)
+            AccessibleLabel: |-
+              ="Site filter"
+            OnChange: |-
+              =Set(varFSite, Self.Selected.Name);
+
+      - lblCapLAAL:
+          Control: Label
+          Properties:
+            X: =748
+            Y: =60
+            Width: =200
+            Height: =16
+            Text: |-
+              ="Local authority area"
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - ddLAAL:
+          Control: ModernDropdown
+          Properties:
+            X: =748
+            Y: =78
+            Width: =200
+            Height: =32
+            Items: =Sort('SEL Local Authority Areas', Name)
+            ItemDisplayText: =ThisItem.Name
+            #  Default is a RECORD, matching Selected. Looking it up from the
+            #  shared variable is what keeps the bar in step across screens.
+            Default: |-
+              =LookUp(Sort('SEL Local Authority Areas', Name), Name = varFLAA)
+            AccessibleLabel: |-
+              ="Local authority area filter"
+            OnChange: |-
+              =Set(varFLAA, Self.Selected.Name);
+
+      - lblCapDeliveryL:
+          Control: Label
+          Properties:
+            X: =956
+            Y: =60
+            Width: =170
+            Height: =16
+            Text: |-
+              ="Delivery area"
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - ddDeliveryL:
+          Control: ModernDropdown
+          Properties:
+            X: =956
+            Y: =78
+            Width: =170
+            Height: =32
+            Items: =Sort('SEL Delivery Areas', Name)
+            ItemDisplayText: =ThisItem.Name
+            #  Default is a RECORD, matching Selected. Looking it up from the
+            #  shared variable is what keeps the bar in step across screens.
+            Default: |-
+              =LookUp(Sort('SEL Delivery Areas', Name), Name = varFDelivery)
+            AccessibleLabel: |-
+              ="Delivery area filter"
+            OnChange: |-
+              =Set(varFDelivery, Self.Selected.Name);
+
+      - btnClearFiltersL:
+          Control: Classic/Button
+          Properties:
+            X: =16
+            Y: =120
+            Width: =130
+            Height: =30
+            Text: |-
+              ="Clear filters"
+            Fill: =RGBA(255, 255, 255, 1)
+            Color: =ClrText
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =TypeLabel
+            Font: =BrandFont
+            #  Clearing the variables is enough: every dropdown Default reads
+            #  them, so all six bars follow without a Reset() on each control.
+            OnSelect: |-
+              =Set(varFProgramme, "");
+              Set(varFProject, "");
+              Set(varFStakeholder, "");
+              Set(varFSite, "");
+              Set(varFLAA, "");
+              Set(varFDelivery, "");
+      # ────────────────────── PRESET BAR ──────────────────────
+      #  Five saved views, one button each.
+      #  Selected state is derived from varListPreset, so the highlight cannot
+      #  drift away from what the grid is actually showing.
+
+      - btnPresetNext90:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =156
+            Y: =120
+            Width: =116
+            Height: =32
+            Text: |-
+              ="Next 90 days"
+            Fill: |-
+              =If(varListPreset = "90", ClrHeader, RGBA(255, 255, 255, 1))
+            Color: |-
+              =If(varListPreset = "90", RGBA(255, 255, 255, 1), ClrText)
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =10
+            OnSelect: =Set(varListPreset, "90")
+
+      - btnPresetMine:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =282
+            Y: =120
+            Width: =116
+            Height: =32
+            Text: |-
+              ="My activities"
+            Fill: |-
+              =If(varListPreset = "Mine", ClrHeader, RGBA(255, 255, 255, 1))
+            Color: |-
+              =If(varListPreset = "Mine", RGBA(255, 255, 255, 1), ClrText)
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =10
+            OnSelect: =Set(varListPreset, "Mine")
+
+      - btnPresetRag:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =408
+            Y: =120
+            Width: =116
+            Height: =32
+            Text: |-
+              ="Amber & Red"
+            Fill: |-
+              =If(varListPreset = "RAG", ClrToday, RGBA(255, 255, 255, 1))
+            Color: |-
+              =If(varListPreset = "RAG", RGBA(255, 255, 255, 1), ClrText)
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =10
+            OnSelect: =Set(varListPreset, "RAG")
+
+      - btnPresetUnassigned:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =534
+            Y: =120
+            Width: =116
+            Height: =32
+            Text: |-
+              ="Unassigned"
+            Fill: |-
+              =If(varListPreset = "Unassigned", ClrHeader, RGBA(255, 255, 255, 1))
+            Color: |-
+              =If(varListPreset = "Unassigned", RGBA(255, 255, 255, 1), ClrText)
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =10
+            OnSelect: =Set(varListPreset, "Unassigned")
+
+      - btnPresetAll:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =660
+            Y: =120
+            Width: =116
+            Height: =32
+            Text: |-
+              ="All"
+            Fill: |-
+              =If(varListPreset = "All", ClrHeader, RGBA(255, 255, 255, 1))
+            Color: |-
+              =If(varListPreset = "All", RGBA(255, 255, 255, 1), ClrText)
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =10
+            OnSelect: =Set(varListPreset, "All")
+
+      # The grid's own Searchable is off and this box drives Items instead. Two
+      # search inputs over one grid is a documented defect: the grid's internal
+      # search filters only what has already been fetched, so the two disagree.
+      #
+      # Items reads txtSearch.Text directly rather than through OnChange, because
+      # a text input raises OnChange on focus-out only, not per keystroke.
+
+      - txtSearch:
+          Control: Classic/TextInput
+          Properties:
+            Font: =BrandFont
+            X: =790
+            Y: =120
+            Width: =330
+            Height: =30
+            Default: |-
+              =""
+            HintText: |-
+              ="Type to filter"
+            Size: =10
+
+      - btnNewActivity:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =1136
+            Y: =78
+            Width: =214
+            Height: =32
+            Text: |-
+              ="+  Add New Activity"
+            Fill: =ClrAccent
+            Color: =RGBA(255, 255, 255, 1)
+            Size: =11
+            # The add form lives on the timeline screen. Navigating there and
+            # opening it keeps one form rather than two that drift apart.
+            OnSelect: |-
+              =Set(varAddReset, false);
+              Set(varShowAdd, true);
+              Navigate(scrTimeline, ScreenTransition.None)
+
+      # ────────────────────── COUNT + TRUNCATION ──────────────────────
+      #  CountRows on the Items expression, not on the grid: a grid reports what it
+      #  has loaded, which is not the same as what the query matches.
+      - lblListCount:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            X: =1136
+            Y: =120
+            Width: =214
+            Height: =30
+            Text: |-
+              =CountRows(
+                   Filter(
+                       'SEL Engagement Activities',
+                       StartsWith(Activity, txtSearch.Text)
+                          || StartsWith('Stakeholder Name', txtSearch.Text),
+                       IsBlank(varFProgramme)   || Programme.Name              = varFProgramme,
+                       IsBlank(varFProject)     || Project.Name                = varFProject,
+                       IsBlank(varFStakeholder) || 'Stakeholder Category'.Name = varFStakeholder,
+                       IsBlank(varFSite)        || 'Project Site'.Name         = varFSite,
+                       IsBlank(varFLAA)         || 'Local Authority Area'.Name = varFLAA,
+                       IsBlank(varFDelivery)    || 'Delivery Area'.Name        = varFDelivery,
+                       varListPreset <> "90" ||
+                          ('Start Date' <= DateAdd(Today(), 90, TimeUnit.Days) && 'End Date' >= Today()),
+                       varListPreset <> "Mine" || 'Engagement Lead'.'Full Name' = User().FullName,
+                       varListPreset <> "RAG" ||
+                          (RAG = 'SEL RAG Values'.Red || RAG = 'SEL RAG Values'.Amber),
+                       varListPreset <> "Unassigned" || IsBlank('Engagement Lead')
+                   )
+               ) & " activities" &
+               If(IsBlank(txtSearch.Text), "", "  ·  matching " & txtSearch.Text)
+            Size: =10
+            Color: =ClrMuted
+            VerticalAlign: =VerticalAlign.Middle
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      # ────────────────────── THE GRID ──────────────────────
+      - grdActivities:
+          Control: ModernDataGrid
+          Properties:
+            X: =16
+            Y: =164
+            Width: =1334
+            Height: =586
+            Searchable: =false
+            Sortable: =true
+            SelectMultiple: =false
+            ShowSelector: =false
+            ShowHeaders: =true
+            Items: |-
+              =Sort(
+                   Filter(
+                       'SEL Engagement Activities',
+                       StartsWith(Activity, txtSearch.Text)
+                          || StartsWith('Stakeholder Name', txtSearch.Text),
+                       IsBlank(varFProgramme)   || Programme.Name              = varFProgramme,
+                       IsBlank(varFProject)     || Project.Name                = varFProject,
+                       IsBlank(varFStakeholder) || 'Stakeholder Category'.Name = varFStakeholder,
+                       IsBlank(varFSite)        || 'Project Site'.Name         = varFSite,
+                       IsBlank(varFLAA)         || 'Local Authority Area'.Name = varFLAA,
+                       IsBlank(varFDelivery)    || 'Delivery Area'.Name        = varFDelivery,
+                       varListPreset <> "90" ||
+                          ('Start Date' <= DateAdd(Today(), 90, TimeUnit.Days) && 'End Date' >= Today()),
+                       varListPreset <> "Mine" || 'Engagement Lead'.'Full Name' = User().FullName,
+                       varListPreset <> "RAG" ||
+                          (RAG = 'SEL RAG Values'.Red || RAG = 'SEL RAG Values'.Amber),
+                       varListPreset <> "Unassigned" || IsBlank('Engagement Lead')
+                   ),
+                   'Start Date'
+               )
+            # Selected is stored rather than read live: a grid's Selected can change
+            # on its own when Items changes or the data source refreshes.
+            OnChange: =Set(varSelected, Self.Selected)
+          Children:
+            - colLead:
+                Control: ModernDataGridColumn
+                Variant: Textual
+                Properties:
+                  FieldDisplayName: |-
+                    ="Lead"
+                  Width: =170
+                  Text: =ThisItem.'Engagement Lead'.'Full Name'
+            - colRag:
+                Control: ModernDataGridColumn
+                Variant: Textual
+                Properties:
+                  FieldDisplayName: |-
+                    ="RAG"
+                  Width: =80
+                  Text: =ThisItem.RAG
+            - colStakeholder:
+                Control: ModernDataGridColumn
+                Variant: Textual
+                Properties:
+                  FieldDisplayName: |-
+                    ="Stakeholder"
+                  Width: =180
+                  Text: =ThisItem.'Stakeholder Name'
+            - colSite:
+                Control: ModernDataGridColumn
+                Variant: Textual
+                Properties:
+                  FieldDisplayName: |-
+                    ="Site"
+                  Width: =110
+                  Text: =ThisItem.'Project Site'.Name
+            - colProject:
+                Control: ModernDataGridColumn
+                Variant: Textual
+                Properties:
+                  FieldDisplayName: |-
+                    ="Project"
+                  Width: =110
+                  Text: =ThisItem.Project.Name
+            - colCategory:
+                Control: ModernDataGridColumn
+                Variant: Textual
+                Properties:
+                  FieldDisplayName: |-
+                    ="Category"
+                  Width: =170
+                  Text: =ThisItem.'Stakeholder Category'.Name
+            - colActivity:
+                Control: ModernDataGridColumn
+                Variant: Textual
+                Properties:
+                  FieldDisplayName: |-
+                    ="Activity"
+                  Width: =300
+                  Text: =ThisItem.Activity
+            - colEnd:
+                Control: ModernDataGridColumn
+                Variant: Textual
+                Properties:
+                  FieldDisplayName: |-
+                    ="End"
+                  Width: =100
+                  Text: |-
+                    =Text(ThisItem.'End Date', "dd mmm yyyy")
+            - colStart:
+                Control: ModernDataGridColumn
+                Variant: Textual
+                Properties:
+                  FieldDisplayName: |-
+                    ="Start"
+                  Width: =100
+                  Text: |-
+                    =Text(ThisItem.'Start Date', "dd mmm yyyy")

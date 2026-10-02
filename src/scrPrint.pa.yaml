@@ -1,0 +1,454 @@
+#  scrPrint — flat layout for PDF export.
+#
+#  PDF() does not support nested galleries, so the board is rebuilt here as two
+#  SIBLING galleries with absolute Y instead of one nested pair. Coordinates are
+#  relative to cntPrintArea, so the plot starts at LabelW, not at PlotX.
+#
+#  This screen reads collections and variables built on scrTimeline and is
+#  opened from the timeline's print button. Reaching it directly, without
+#  visiting the timeline first, renders it empty.
+#
+#  HOW TO PASTE
+#    1. Paste App.Formulas.txt into App > Formulas first (once for the whole app).
+#    2. Paste scrTimeline first; this screen uses its collections.
+#    3. New screen → Blank, rename it scrPrint, select it in the tree, Ctrl+V.
+#
+#  One screen per file, which is the shape Microsoft's YAML schema expects:
+#  a single top-level object per .pa.yaml.
+#
+#  App-wide rules that bite when editing any of these files:
+#    - Every property value starts with "="; multi-line formulas use "|-".
+#    - A plain scalar may not contain ": " — record literals go in a |- block.
+#    - Order within Children is the z-order: the last element is the topmost.
+#    - AccessibleLabel does not exist on Classic/Button.
+#
+
+Screens:
+  scrPrint:
+    Properties:
+      Fill: =RGBA(255, 255, 255, 1)
+    Children:
+
+      # ───────────── toolbar (excluded from the PDF) ─────────────
+      - recPrintBar:
+          Control: Rectangle
+          Properties:
+            # Hidden during printing so the toolbar stays out of the report.
+            Visible: =!varPrinting
+            X: =0
+            Y: =0
+            Width: =1366
+            Height: =48
+            Fill: =ClrFilterBg
+
+      - btnPrintBack:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            Visible: =!varPrinting
+            X: =16
+            Y: =9
+            Width: =110
+            Height: =30
+            Text: |-
+              ="← Back"
+            Fill: =RGBA(255, 255, 255, 1)
+            Color: =ClrText
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =10
+            OnSelect: =Back()
+
+      - lblPrintHint:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            Visible: =!varPrinting
+            X: =140
+            Y: =9
+            Width: =900
+            Height: =30
+            Text: |-
+              ="Print preview — " & CountRows(colPrintMarkers) &
+               " activities, " & CountRows(colPrintRows) & " categories, " &
+               varPrintTotalH & " px of content"
+            Size: =10
+            Color: =ClrMuted
+            VerticalAlign: =VerticalAlign.Middle
+
+      - btnDoExport:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            Visible: =!varPrinting
+            X: =1180
+            Y: =9
+            Width: =170
+            Height: =30
+            Text: |-
+              ="Print / Save as PDF"
+            Fill: =ClrAccent
+            Color: =RGBA(255, 255, 255, 1)
+            Size: =11
+            # Print(), not Download(PDF(...)).
+            #
+            # Download(Address) accepts "the URL address of a web resource" — a text
+            # URL and nothing else. PDF() returns a blob, so that pairing can never
+            # work; it reports "The URL passed to the function is not valid", which
+            # points at a URL problem that does not exist.
+            #
+            # Turning the blob into a real file needs a Power Automate flow that
+            # saves it and returns a path, which Download() can then take. Without
+            # such a flow, the browser print dialog does the job: its
+            # "Save as PDF" destination is what people use anyway, and this screen
+            # is already laid out for A3 landscape.
+            #
+            # The flat layout here is still required regardless: PDF() does not
+            # support NESTED galleries, and neither does a clean print.
+            OnSelect: |-
+              =Set(varPrinting, true);
+              Print();
+              Set(varPrinting, false)
+
+      # ───────────── print area ─────────────
+      - cntPrintArea:
+          Control: GroupContainer
+          Variant: ManualLayout
+          Properties:
+            X: =8
+            Y: =56
+            Width: =1350
+            Height: =varPrintTotalH + 96
+            LayoutMinWidth: =0
+            LayoutMinHeight: =0
+            Fill: =RGBA(255, 255, 255, 1)
+          Children:
+
+            # report header: without it a printed timeline cannot be read
+            - lblReportTitle:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =0
+                  Y: =0
+                  Width: =900
+                  Height: =26
+                  Text: |-
+                    ="Stakeholder Engagement Lookahead — " & BrandName
+                  Size: =14
+                  FontWeight: =FontWeight.Semibold
+                  Color: =ClrText
+                  PaddingLeft: =0
+
+            - lblReportRange:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =0
+                  Y: =26
+                  Width: =900
+                  Height: =20
+                  Text: |-
+                    =Text(TimelineStart, "d mmmm yyyy") & " – " &
+                     Text(DateAdd(TimelineEnd, -1, TimeUnit.Days), "d mmmm yyyy")
+                  Size: =11
+                  Color: =ClrText
+                  PaddingLeft: =0
+
+            - lblReportFilters:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =0
+                  Y: =46
+                  Width: =900
+                  Height: =18
+                  Text: |-
+                    ="Filters: " & ActiveFilterText
+                  Size: =9
+                  Color: =ClrMuted
+                  PaddingLeft: =0
+
+            - lblReportStamp:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =900
+                  Y: =26
+                  Width: =450
+                  Height: =38
+                  Text: |-
+                    ="Generated " & Text(Now(), "d mmm yyyy HH:mm") & Char(10) &
+                     "by " & User().FullName
+                  Size: =9
+                  Color: =ClrMuted
+                  Align: =Align.Right
+
+            # ───────── month header ─────────
+            # Month header as three labels, not a gallery: TemplateSize does not
+            # accept ThisItem, so a gallery cannot give each month its real width.
+            # Each label is positioned and sized from the actual month lengths.
+            - recMonthHeadBgP:
+                Control: Rectangle
+                Properties:
+                  X: =LabelW
+                  Y: =68
+                  Width: =PlotW
+                  Height: =26
+                  Fill: =ClrHeadBand
+            - lblMonth0P:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: |-
+                    =LabelW + DateDiff(TimelineStart, DateAdd(TimelineStart, 0, TimeUnit.Months), TimeUnit.Days) * PxPerDay
+                  Y: =68
+                  Width: |-
+                    =DateDiff(
+                        DateAdd(TimelineStart, 0, TimeUnit.Months),
+                        DateAdd(TimelineStart, 1, TimeUnit.Months),
+                        TimeUnit.Days
+                     ) * PxPerDay
+                  Height: =26
+                  Text: |-
+                    =Text(DateAdd(TimelineStart, 0, TimeUnit.Months), "mmmm yyyy")
+                  Size: =10
+                  FontWeight: =FontWeight.Semibold
+                  Color: =ClrText
+                  Align: =Align.Center
+                  VerticalAlign: =VerticalAlign.Middle
+            - lblMonth1P:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: |-
+                    =LabelW + DateDiff(TimelineStart, DateAdd(TimelineStart, 1, TimeUnit.Months), TimeUnit.Days) * PxPerDay
+                  Y: =68
+                  Width: |-
+                    =DateDiff(
+                        DateAdd(TimelineStart, 1, TimeUnit.Months),
+                        DateAdd(TimelineStart, 2, TimeUnit.Months),
+                        TimeUnit.Days
+                     ) * PxPerDay
+                  Height: =26
+                  Text: |-
+                    =Text(DateAdd(TimelineStart, 1, TimeUnit.Months), "mmmm yyyy")
+                  Size: =10
+                  FontWeight: =FontWeight.Semibold
+                  Color: =ClrText
+                  Align: =Align.Center
+                  VerticalAlign: =VerticalAlign.Middle
+            - recMonthHeadDiv1P:
+                Control: Rectangle
+                Properties:
+                  X: |-
+                    =LabelW + DateDiff(TimelineStart, DateAdd(TimelineStart, 1, TimeUnit.Months), TimeUnit.Days) * PxPerDay
+                  Y: =68
+                  Width: =1
+                  Height: =26
+                  Fill: =RGBA(255, 255, 255, 1)
+            - lblMonth2P:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: |-
+                    =LabelW + DateDiff(TimelineStart, DateAdd(TimelineStart, 2, TimeUnit.Months), TimeUnit.Days) * PxPerDay
+                  Y: =68
+                  Width: |-
+                    =DateDiff(
+                        DateAdd(TimelineStart, 2, TimeUnit.Months),
+                        DateAdd(TimelineStart, 3, TimeUnit.Months),
+                        TimeUnit.Days
+                     ) * PxPerDay
+                  Height: =26
+                  Text: |-
+                    =Text(DateAdd(TimelineStart, 2, TimeUnit.Months), "mmmm yyyy")
+                  Size: =10
+                  FontWeight: =FontWeight.Semibold
+                  Color: =ClrText
+                  Align: =Align.Center
+                  VerticalAlign: =VerticalAlign.Middle
+            - recMonthHeadDiv2P:
+                Control: Rectangle
+                Properties:
+                  X: |-
+                    =LabelW + DateDiff(TimelineStart, DateAdd(TimelineStart, 2, TimeUnit.Months), TimeUnit.Days) * PxPerDay
+                  Y: =68
+                  Width: =1
+                  Height: =26
+                  Fill: =RGBA(255, 255, 255, 1)
+            # ───────── category bands (flat gallery) ─────────
+            - galRowsPrint:
+                Control: Gallery
+                # Rows vary in height here too, so the bands line up with the
+                # absolute Top each marker was given.
+                Variant: VariableHeight
+                Properties:
+                  X: =0
+                  Y: =94
+                  Width: =LabelW + PlotW
+                  Height: =varPrintTotalH
+                  TemplateSize: =RowMinH
+                  TemplatePadding: =0
+                  ShowScrollbar: =false
+                  ShowNavigation: =false
+                  Selectable: =false
+                  DelayItemLoading: =false
+                  Items: =colPrintRows
+                Children:
+                  - recRowBgP:
+                      Control: Rectangle
+                      Properties:
+                        X: =0
+                        Y: =0
+                        Width: =Parent.Width
+                        Height: =ThisItem.H
+                        Fill: |-
+                          =ColorValue(Coalesce(ThisItem.Colour, "#E9EDF2"))
+                  - lblRowNameP:
+                      Control: Label
+                      Properties:
+                        Font: =BrandFont
+                        X: =8
+                        Y: =0
+                        Width: =LabelW - 16
+                        Height: =ThisItem.H
+                        Text: =ThisItem.Name
+                        Size: =10
+                        FontWeight: =FontWeight.Semibold
+                        Color: |-
+                          =ColorValue(Coalesce(ThisItem.TextColour, "#20304A"))
+                        VerticalAlign: =VerticalAlign.Middle
+                        Wrap: =true
+                        PaddingLeft: =0
+                  - recLabelDivP:
+                      Control: Rectangle
+                      Properties:
+                        X: =LabelW - 1
+                        Y: =0
+                        Width: =1
+                        Height: =ThisItem.H
+                        Fill: =ClrGrid
+                  - recMonthSep1P:
+                      Control: Rectangle
+                      Properties:
+                        X: |-
+                          =LabelW + DateDiff(TimelineStart, DateAdd(TimelineStart, 1, TimeUnit.Months), TimeUnit.Days) * PxPerDay
+                        Y: =0
+                        Width: =1
+                        Height: =ThisItem.H
+                        Fill: =ClrGrid
+                  - recMonthSep2P:
+                      Control: Rectangle
+                      Properties:
+                        X: |-
+                          =LabelW + DateDiff(TimelineStart, DateAdd(TimelineStart, 2, TimeUnit.Months), TimeUnit.Days) * PxPerDay
+                        Y: =0
+                        Width: =1
+                        Height: =ThisItem.H
+                        Fill: =ClrGrid
+                  - recRowBottomP:
+                      Control: Rectangle
+                      Properties:
+                        X: =0
+                        Y: =ThisItem.H - 1
+                        Width: =Parent.Width
+                        Height: =1
+                        Fill: =ClrGrid
+
+            # ───────── markers (a second flat gallery, above the first) ─────────
+            #  A sibling gallery, not a nested one, with TemplateSize = LaneH. The
+            #  gallery itself moves item k down by SeqAll * LaneH; each Y adds the
+            #  row Top and the lane (Seq * LaneH) and subtracts that offset, so the
+            #  final position is absolute.
+            - galMarkersPrint:
+                Control: Gallery
+                Variant: Vertical
+                Properties:
+                  X: =LabelW
+                  Y: =94
+                  Width: =PlotW
+                  Height: =Max(varPrintTotalH, CountRows(colPrintMarkers) * LaneH)
+                  TemplateSize: =LaneH
+                  TemplatePadding: =0
+                  ShowScrollbar: =false
+                  ShowNavigation: =false
+                  Selectable: =false
+                  DelayItemLoading: =false
+                  Items: |-
+                    =SortByColumns(
+                        colPrintMarkers,
+                        "CatSort", SortOrder.Ascending,
+                        "StartD", SortOrder.Ascending,
+                        "CreatedOn", SortOrder.Ascending
+                     )
+                Children:
+                  - recBarP:
+                      Control: Rectangle
+                      Properties:
+                        Visible: =!ThisItem.IsDiamond
+                        X: =Max(ThisItem.DayOffset, 0) * PxPerDay
+                        Y: |-
+                          =ThisItem.Top + ThisItem.Seq * LaneH + 11 - ThisItem.SeqAll * LaneH
+                        Width: |-
+                          =Max(
+                              (ThisItem.DayOffset + ThisItem.BarDays) - Max(ThisItem.DayOffset, 0),
+                              1
+                           ) * PxPerDay
+                        Height: =10
+                        Fill: =ColorValue(ThisItem.MarkerHex)
+
+                  - imgDiamondP:
+                      Control: Image
+                      Properties:
+                        Visible: =ThisItem.IsDiamond
+                        X: =ThisItem.DayOffset * PxPerDay - 8
+                        Y: |-
+                          =ThisItem.Top + ThisItem.Seq * LaneH + 8 - ThisItem.SeqAll * LaneH
+                        Width: =16
+                        Height: =16
+                        Image: |-
+                          ="data:image/svg+xml;utf8," &
+                           EncodeUrl(
+                               "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>" &
+                               "<polygon points='12,1.5 22.5,12 12,22.5 1.5,12' fill='" &
+                               If(ThisItem.DateTBC, "none", ThisItem.MarkerHex) &
+                               "' stroke='" &
+                               If(ThisItem.DateTBC, ThisItem.MarkerHex, "#FFFFFF") &
+                               "' stroke-width='" &
+                               If(ThisItem.DateTBC, 2.5, 1.2) & "'/></svg>"
+                           )
+
+                  - lblMarkerP:
+                      Control: Label
+                      Properties:
+                        Font: =BrandFont
+                        X: |-
+                          =If(
+                              ThisItem.LabelOnLeft,
+                              Max(ThisItem.DayOffset, 0) * PxPerDay - 246,
+                              Max(ThisItem.DayOffset, 0) * PxPerDay +
+                              If(
+                                  ThisItem.IsDiamond,
+                                  11,
+                                  Max(
+                                      (ThisItem.DayOffset + ThisItem.BarDays) - Max(ThisItem.DayOffset, 0),
+                                      1
+                                  ) * PxPerDay + 6
+                              )
+                           )
+                        Y: |-
+                          =ThisItem.Top + ThisItem.Seq * LaneH + 6 - ThisItem.SeqAll * LaneH
+                        Width: =240
+                        Height: =20
+                        Text: =ThisItem.LabelText
+                        Align: |-
+                          =If(ThisItem.LabelOnLeft, Align.Right, Align.Left)
+                        Size: =9
+                        Color: =ColorValue(ThisItem.RowTextColour)
+                        VerticalAlign: =VerticalAlign.Middle
+                        Wrap: =false
+                        PaddingTop: =0
+                        PaddingBottom: =0
+                        PaddingLeft: =0
+                        PaddingRight: =0

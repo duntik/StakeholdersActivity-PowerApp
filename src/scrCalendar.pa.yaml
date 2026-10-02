@@ -1,0 +1,891 @@
+#  scrCalendar — month / week / day calendar.
+#
+#  Seven-day grid including weekends, the shared filter bar, and a "+" in each
+#  day cell that opens the Add New Activity form on scrTimeline dated to that day.
+#
+#  HOW TO PASTE
+#    New screen → Blank, name it scrCalendar, select it in the tree, Ctrl+V.
+#    App.Formulas.txt must already be pasted (this screen uses ClrHeader,
+#    ClrFilterBg, ClrText, ClrToday), and scrTimeline must exist for the
+#    add form.
+#
+#  ONE gallery serves all three modes. A Vertical gallery with WrapCount lays its
+#  items across and then down, so the same control is a 6x7 month grid, a 1x7 week
+#  strip, or a single day column — only the cell count, the wrap count and the
+#  template height change. Three galleries would mean three copies of the logic.
+#
+#  Nesting is exactly two deep: cell gallery → activity gallery. Three would not
+#  be allowed.
+#
+#  State is a single date, varCalAnchor, plus varCalMode. Everything else is
+#  derived from them in btnLoadCalendar, so the arrows cannot disagree with the
+#  grid the way a separate "displayed month" variable would.
+#
+#  Order within Children is the z-order: the last element is the topmost.
+#  Every property value starts with "="; multi-line formulas use "|-"; a plain
+#  scalar may not contain ": ", so record literals live in |- blocks.
+#  AccessibleLabel does not exist on Classic/Button.
+
+Screens:
+  scrCalendar:
+    Properties:
+      Fill: =RGBA(255, 255, 255, 1)
+      OnVisible: |-
+        =Set(varCalAnchor, Coalesce(varCalAnchor, Today()));
+        Set(varCalMode, Coalesce(varCalMode, "Month"));
+        Select(btnLoadCalendar)
+    Children:
+
+      # ─────────── DATA LOAD ───────────
+      #  1x1 at the origin and first in Children, so the header rectangle paints
+      #  over it. Visible stays true: Select() does not fire on a hidden control,
+      #  and negative coordinates are normalised away on paste.
+      - btnLoadCalendar:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =0
+            Y: =0
+            Width: =1
+            Height: =1
+            Text: |-
+              ="load"
+            OnSelect: |-
+              =Set(varCalCells, Switch(varCalMode, "Month", 42, "Week", 7, 1));
+
+              // The grid always starts on a Monday, so the weekday header lines up
+              // whatever month is shown. Weekday(d, StartOfWeek.Monday) is 1 on
+              // Monday, so subtracting (it - 1) days walks back to that Monday.
+              Set(
+                  varCalStart,
+                  Switch(
+                      varCalMode,
+                      "Month",
+                      With(
+                          { first: Date(Year(varCalAnchor), Month(varCalAnchor), 1) },
+                          DateAdd(first, -(Weekday(first, StartOfWeek.Monday) - 1), TimeUnit.Days)
+                      ),
+                      "Week",
+                      DateAdd(
+                          varCalAnchor,
+                          -(Weekday(varCalAnchor, StartOfWeek.Monday) - 1),
+                          TimeUnit.Days
+                      ),
+                      varCalAnchor
+                  )
+              );
+              Set(varCalEnd, DateAdd(varCalStart, varCalCells - 1, TimeUnit.Days));
+
+              ClearCollect(
+                  colCalDays,
+                  ForAll(
+                      Sequence(varCalCells) As S,
+                      {
+                          D: DateAdd(varCalStart, S.Value - 1, TimeUnit.Days),
+                          InMonth: Month(DateAdd(varCalStart, S.Value - 1, TimeUnit.Days)) = Month(varCalAnchor)
+                      }
+                  )
+              );
+
+              // Overlap, not containment: an activity that starts before the window
+              // and ends inside it belongs on every day it covers. Both comparisons
+              // are on base columns, so this delegates.
+              ClearCollect(
+                  colCal,
+                  AddColumns(
+                      Filter(
+                          'SEL Engagement Activities',
+                          'Start Date' <= varCalEnd,
+                          'End Date'   >= varCalStart,
+                          IsBlank(varFProgramme)   || Programme.Name              = varFProgramme,
+                          IsBlank(varFProject)     || Project.Name                = varFProject,
+                          IsBlank(varFStakeholder) || 'Stakeholder Category'.Name = varFStakeholder,
+                          IsBlank(varFSite)        || 'Project Site'.Name         = varFSite,
+                          IsBlank(varFLAA)         || 'Local Authority Area'.Name = varFLAA,
+                          IsBlank(varFDelivery)    || 'Delivery Area'.Name        = varFDelivery
+                      ),
+                      StartD,       'Start Date',
+                      EndD,         'End Date',
+                      CategoryName, 'Stakeholder Category'.Name,
+                      CatColour,    'Stakeholder Category'.'Colour Hex',
+                      CatText,      'Stakeholder Category'.'Text Colour Hex',
+                      CellText,     If(Project.Name = "N/A", "", Project.Name & " – ") & Activity,
+                      CellTip,      Activity & Char(10) &
+                                    "Stakeholder: " & 'Stakeholder Name' & Char(10) &
+                                    "Dates: " & Text('Start Date', "dd mmm yyyy") & " – " &
+                                                Text('End Date', "dd mmm yyyy")
+                  )
+              )
+
+      # ══════════════════ SHARED HEADER ══════════════════
+      #  Repeated per screen because the modern Header control is documented
+      #  as not replicating across screens, and a canvas component would need
+      #  a library import that YAML paste cannot perform.
+      - recHeaderC:
+          Control: Rectangle
+          Properties:
+            X: =0
+            Y: =0
+            Width: =1366
+            Height: =56
+            Fill: =ClrHeader
+
+      - lblTitleC:
+          Control: Label
+          Properties:
+            X: =20
+            Y: =0
+            Width: =600
+            Height: =56
+            Text: |-
+              ="Engagement Calendar"
+            Color: =ClrOnDark
+            Size: =TypeHeadline
+            FontWeight: =FontWeight.Semibold
+            Font: =BrandFont
+            VerticalAlign: =VerticalAlign.Middle
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            Role: =TextRole.Heading1
+
+      - lblBrandC:
+          Control: Label
+          Properties:
+            X: =640
+            Y: =0
+            Width: =320
+            Height: =56
+            Text: =BrandName
+            Color: =ClrOnDark
+            Size: =TypeTitleLg
+            FontWeight: =FontWeight.Bold
+            Font: =BrandFont
+            Align: =Align.Right
+            VerticalAlign: =VerticalAlign.Middle
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            #  PLACEHOLDER. Replace this Label with an Image of your logo; a
+            #  white version reads best on the dark header.
+
+      - btnNavTimelineC:
+          Control: Classic/Button
+          Properties:
+            X: =982
+            Y: =12
+            Width: =100
+            Height: =32
+            Text: |-
+              ="Timeline"
+            Fill: =RGBA(255, 255, 255, 1)
+            Color: =ClrText
+            BorderColor: =ClrOnDark
+            BorderThickness: =1
+            Size: =TypeLabel
+            Font: =BrandFont
+            OnSelect: =Navigate(scrTimeline, ScreenTransition.None)
+            HoverFill: =MdPrimaryContainer
+            HoverColor: =MdOnPrimaryContainer
+
+      - btnNavCalendarC:
+          Control: Classic/Button
+          Properties:
+            X: =1090
+            Y: =12
+            Width: =100
+            Height: =32
+            Text: |-
+              ="Calendar"
+            Fill: =MdPrimaryContainer
+            Color: =MdOnPrimaryContainer
+            BorderColor: =ClrOnDark
+            BorderThickness: =0
+            Size: =TypeLabel
+            Font: =BrandFont
+            DisplayMode: =DisplayMode.Disabled
+            DisabledFill: =MdPrimaryContainer
+            DisabledColor: =MdOnPrimaryContainer
+
+      - btnNavListC:
+          Control: Classic/Button
+          Properties:
+            X: =1198
+            Y: =12
+            Width: =100
+            Height: =32
+            Text: |-
+              ="List"
+            Fill: =RGBA(255, 255, 255, 1)
+            Color: =ClrText
+            BorderColor: =ClrOnDark
+            BorderThickness: =1
+            Size: =TypeLabel
+            Font: =BrandFont
+            OnSelect: =Navigate(scrList, ScreenTransition.None)
+            HoverFill: =MdPrimaryContainer
+            HoverColor: =MdOnPrimaryContainer
+
+      - icoSettingsC:
+          Control: Classic/Icon
+          Properties:
+            Icon: =Icon.Settings
+            X: =1310
+            Y: =14
+            Width: =28
+            Height: =28
+            Color: =ClrOnDark
+            Tooltip: |-
+              ="Reference data"
+            AccessibleLabel: |-
+              ="Reference data settings"
+            OnSelect: =Navigate(scrRefData, ScreenTransition.None)
+      # ══════════════════ SHARED FILTER BAR ══════════════════
+      #  Identical on scrList, scrTimeline and scrCalendar. Keep the three
+      #  copies in sync when changing one.
+      #
+      #  The selection lives in GLOBAL VARIABLES, not in the controls. Reading
+      #  a control means the filter only exists on the screen that owns it —
+      #  navigate away and the same bar elsewhere would show something else.
+      #
+      #  ModernDropdown carries ItemDisplayText, which is the documented way to
+      #  choose the displayed column, so no one-column ForAll table is needed
+      #  as with a classic dropdown. Note it is an EXPRESSION: ="Name" as a
+      #  string compiles and renders every option blank.
+      - recFilterBarC:
+          Control: Rectangle
+          Properties:
+            X: =0
+            Y: =56
+            Width: =1366
+            Height: =100
+            Fill: =ClrFilterBg
+
+      - lblCapProgrammeC:
+          Control: Label
+          Properties:
+            X: =16
+            Y: =60
+            Width: =170
+            Height: =16
+            Text: |-
+              ="Programme"
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - ddProgrammeC:
+          Control: ModernDropdown
+          Properties:
+            X: =16
+            Y: =78
+            Width: =170
+            Height: =32
+            Items: =Sort('SEL Programmes', Name)
+            ItemDisplayText: =ThisItem.Name
+            #  Default is a RECORD, matching Selected. Looking it up from the
+            #  shared variable is what keeps the bar in step across screens.
+            Default: |-
+              =LookUp(Sort('SEL Programmes', Name), Name = varFProgramme)
+            AccessibleLabel: |-
+              ="Programme filter"
+            OnChange: |-
+              =Set(varFProgramme, Self.Selected.Name);
+              Select(btnLoadCalendar)
+
+      - lblCapProjectC:
+          Control: Label
+          Properties:
+            X: =194
+            Y: =60
+            Width: =170
+            Height: =16
+            Text: |-
+              ="Project"
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - ddProjectC:
+          Control: ModernDropdown
+          Properties:
+            X: =194
+            Y: =78
+            Width: =170
+            Height: =32
+            Items: =Sort(Filter('SEL Projects', Active = true), Name)
+            ItemDisplayText: =ThisItem.Name
+            #  Default is a RECORD, matching Selected. Looking it up from the
+            #  shared variable is what keeps the bar in step across screens.
+            Default: |-
+              =LookUp(Sort(Filter('SEL Projects', Active = true), Name), Name = varFProject)
+            AccessibleLabel: |-
+              ="Project filter"
+            OnChange: |-
+              =Set(varFProject, Self.Selected.Name);
+              Select(btnLoadCalendar)
+
+      - lblCapStakeholderC:
+          Control: Label
+          Properties:
+            X: =372
+            Y: =60
+            Width: =190
+            Height: =16
+            Text: |-
+              ="Stakeholder category"
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - ddStakeholderC:
+          Control: ModernDropdown
+          Properties:
+            X: =372
+            Y: =78
+            Width: =190
+            Height: =32
+            Items: =Sort(Filter('SEL Stakeholder Categories', Active = true), Name)
+            ItemDisplayText: =ThisItem.Name
+            #  Default is a RECORD, matching Selected. Looking it up from the
+            #  shared variable is what keeps the bar in step across screens.
+            Default: |-
+              =LookUp(Sort(Filter('SEL Stakeholder Categories', Active = true), Name), Name = varFStakeholder)
+            AccessibleLabel: |-
+              ="Stakeholder category filter"
+            OnChange: |-
+              =Set(varFStakeholder, Self.Selected.Name);
+              Select(btnLoadCalendar)
+
+      - lblCapSiteC:
+          Control: Label
+          Properties:
+            X: =570
+            Y: =60
+            Width: =170
+            Height: =16
+            Text: |-
+              ="Site"
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - ddSiteC:
+          Control: ModernDropdown
+          Properties:
+            X: =570
+            Y: =78
+            Width: =170
+            Height: =32
+            Items: =Sort('SEL Project Sites', Name)
+            ItemDisplayText: =ThisItem.Name
+            #  Default is a RECORD, matching Selected. Looking it up from the
+            #  shared variable is what keeps the bar in step across screens.
+            Default: |-
+              =LookUp(Sort('SEL Project Sites', Name), Name = varFSite)
+            AccessibleLabel: |-
+              ="Site filter"
+            OnChange: |-
+              =Set(varFSite, Self.Selected.Name);
+              Select(btnLoadCalendar)
+
+      - lblCapLAAC:
+          Control: Label
+          Properties:
+            X: =748
+            Y: =60
+            Width: =200
+            Height: =16
+            Text: |-
+              ="Local authority area"
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - ddLAAC:
+          Control: ModernDropdown
+          Properties:
+            X: =748
+            Y: =78
+            Width: =200
+            Height: =32
+            Items: =Sort('SEL Local Authority Areas', Name)
+            ItemDisplayText: =ThisItem.Name
+            #  Default is a RECORD, matching Selected. Looking it up from the
+            #  shared variable is what keeps the bar in step across screens.
+            Default: |-
+              =LookUp(Sort('SEL Local Authority Areas', Name), Name = varFLAA)
+            AccessibleLabel: |-
+              ="Local authority area filter"
+            OnChange: |-
+              =Set(varFLAA, Self.Selected.Name);
+              Select(btnLoadCalendar)
+
+      - lblCapDeliveryC:
+          Control: Label
+          Properties:
+            X: =956
+            Y: =60
+            Width: =170
+            Height: =16
+            Text: |-
+              ="Delivery area"
+            Size: =TypeLabel
+            Color: =ClrMuted
+            Font: =BrandFont
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingLeft: =0
+
+      - ddDeliveryC:
+          Control: ModernDropdown
+          Properties:
+            X: =956
+            Y: =78
+            Width: =170
+            Height: =32
+            Items: =Sort('SEL Delivery Areas', Name)
+            ItemDisplayText: =ThisItem.Name
+            #  Default is a RECORD, matching Selected. Looking it up from the
+            #  shared variable is what keeps the bar in step across screens.
+            Default: |-
+              =LookUp(Sort('SEL Delivery Areas', Name), Name = varFDelivery)
+            AccessibleLabel: |-
+              ="Delivery area filter"
+            OnChange: |-
+              =Set(varFDelivery, Self.Selected.Name);
+              Select(btnLoadCalendar)
+
+      - btnClearFiltersC:
+          Control: Classic/Button
+          Properties:
+            X: =16
+            Y: =120
+            Width: =130
+            Height: =30
+            Text: |-
+              ="Clear filters"
+            Fill: =RGBA(255, 255, 255, 1)
+            Color: =ClrText
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =TypeLabel
+            Font: =BrandFont
+            #  Clearing the variables is enough: every dropdown Default reads
+            #  them, so all six bars follow without a Reset() on each control.
+            OnSelect: |-
+              =Set(varFProgramme, "");
+              Set(varFProject, "");
+              Set(varFStakeholder, "");
+              Set(varFSite, "");
+              Set(varFLAA, "");
+              Set(varFDelivery, "");
+              Select(btnLoadCalendar)
+      # ────────────────────── TOOLBAR ──────────────────────
+      #  The arrows step by whatever the current mode shows, so "previous" always
+      #  means "the period before this one" rather than always a month.
+      - icoCalPrev:
+          Control: Classic/Icon
+          Properties:
+            Icon: =Icon.ChevronLeft
+            X: =156
+            Y: =122
+            Width: =28
+            Height: =28
+            Color: =ClrHeader
+            Tooltip: |-
+              ="Previous period"
+            AccessibleLabel: |-
+              ="Previous period"
+            OnSelect: |-
+              =Set(
+                  varCalAnchor,
+                  Switch(
+                      varCalMode,
+                      "Month", DateAdd(varCalAnchor, -1, TimeUnit.Months),
+                      "Week",  DateAdd(varCalAnchor, -7, TimeUnit.Days),
+                      DateAdd(varCalAnchor, -1, TimeUnit.Days)
+                  )
+              );
+              Select(btnLoadCalendar)
+
+      - lblCalPeriod:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            X: =190
+            Y: =118
+            Width: =330
+            Height: =34
+            Text: |-
+              =Switch(
+                   varCalMode,
+                   "Month", Text(varCalAnchor, "mmmm yyyy"),
+                   "Week",  Text(varCalStart, "d mmm") & " – " &
+                            Text(varCalEnd, "d mmm yyyy"),
+                   Text(varCalAnchor, "dddd d mmmm yyyy")
+               )
+            Size: =15
+            FontWeight: =FontWeight.Semibold
+            Color: =ClrText
+            Align: =Align.Center
+            VerticalAlign: =VerticalAlign.Middle
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+
+      - icoCalNext:
+          Control: Classic/Icon
+          Properties:
+            Icon: =Icon.ChevronRight
+            X: =526
+            Y: =122
+            Width: =28
+            Height: =28
+            Color: =ClrHeader
+            Tooltip: |-
+              ="Next period"
+            AccessibleLabel: |-
+              ="Next period"
+            OnSelect: |-
+              =Set(
+                  varCalAnchor,
+                  Switch(
+                      varCalMode,
+                      "Month", DateAdd(varCalAnchor, 1, TimeUnit.Months),
+                      "Week",  DateAdd(varCalAnchor, 7, TimeUnit.Days),
+                      DateAdd(varCalAnchor, 1, TimeUnit.Days)
+                  )
+              );
+              Select(btnLoadCalendar)
+
+      - btnCalToday:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =568
+            Y: =120
+            Width: =90
+            Height: =30
+            Text: |-
+              ="Today"
+            Fill: =RGBA(255, 255, 255, 1)
+            Color: =ClrText
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =10
+            OnSelect: |-
+              =Set(varCalAnchor, Today());
+              Select(btnLoadCalendar)
+
+      # Mode buttons. The highlight is derived from varCalMode, so it cannot drift
+      # away from the grid actually on screen.
+      - btnModeMonth:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =668
+            Y: =120
+            Width: =90
+            Height: =30
+            Text: |-
+              ="Month"
+            Fill: |-
+              =If(varCalMode = "Month", ClrHeader, RGBA(255, 255, 255, 1))
+            Color: |-
+              =If(varCalMode = "Month", RGBA(255, 255, 255, 1), ClrText)
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =10
+            OnSelect: |-
+              =Set(varCalMode, "Month");
+              Select(btnLoadCalendar)
+
+      - btnModeWeek:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =762
+            Y: =120
+            Width: =90
+            Height: =30
+            Text: |-
+              ="Week"
+            Fill: |-
+              =If(varCalMode = "Week", ClrHeader, RGBA(255, 255, 255, 1))
+            Color: |-
+              =If(varCalMode = "Week", RGBA(255, 255, 255, 1), ClrText)
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =10
+            OnSelect: |-
+              =Set(varCalMode, "Week");
+              Select(btnLoadCalendar)
+
+      - btnModeDay:
+          Control: Classic/Button
+          Properties:
+            Font: =BrandFont
+            X: =856
+            Y: =120
+            Width: =90
+            Height: =30
+            Text: |-
+              ="Day"
+            Fill: |-
+              =If(varCalMode = "Day", ClrHeader, RGBA(255, 255, 255, 1))
+            Color: |-
+              =If(varCalMode = "Day", RGBA(255, 255, 255, 1), ClrText)
+            BorderColor: =ClrBorder
+            BorderThickness: =1
+            Size: =10
+            OnSelect: |-
+              =Set(varCalMode, "Day");
+              Select(btnLoadCalendar)
+
+      #  Counts what the window holds against what the server holds, as the
+      #  timeline does: a truncated result otherwise just looks like a quiet
+      #  month.
+      - lblCalCount:
+          Control: Label
+          Properties:
+            Font: =BrandFont
+            X: =950
+            Y: =120
+            Width: =396
+            Height: =30
+            Text: |-
+              =CountRows(colCal) & " activities in view" &
+               If(
+                   CountIf(
+                       'SEL Engagement Activities',
+                       'Start Date' <= varCalEnd,
+                       'End Date' >= varCalStart
+                   ) > CountRows(colCal),
+                   "   ⚠ result truncated",
+                   ""
+               )
+            Size: =10
+            Color: =ClrMuted
+            Align: =Align.Right
+            VerticalAlign: =VerticalAlign.Middle
+            Wrap: =false
+            PaddingTop: =0
+            PaddingBottom: =0
+            PaddingRight: =0
+
+      # ────────────────────── WEEKDAY HEADER ──────────────────────
+      #  Seven columns, not five. Weekend activities are real — shows and
+      #  public events land on Saturdays — and a five-column grid would drop
+      #  them without saying so.
+      - recWeekHead:
+          Control: Rectangle
+          Properties:
+            Visible: |-
+              =varCalMode <> "Day"
+            X: =16
+            Y: =156
+            Width: =1334
+            Height: =24
+            Fill: =ClrHeadBand
+
+      - galWeekHead:
+          Control: Gallery
+          Variant: Horizontal
+          Properties:
+            Visible: |-
+              =varCalMode <> "Day"
+            X: =16
+            Y: =156
+            Width: =1334
+            Height: =24
+            TemplateSize: =1334 / 7
+            TemplatePadding: =0
+            ShowScrollbar: =false
+            ShowNavigation: =false
+            Selectable: =false
+            DelayItemLoading: =false
+            Items: |-
+              =ForAll(
+                   Sequence(7) As S,
+                   { N: Text(DateAdd(Date(2026, 1, 5), S.Value - 1, TimeUnit.Days), "dddd") }
+               )
+          Children:
+            - lblWeekDay:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =0
+                  Y: =0
+                  Width: =Parent.TemplateWidth
+                  Height: =24
+                  Text: =ThisItem.N
+                  Size: =10
+                  FontWeight: =FontWeight.Semibold
+                  Color: =ClrText
+                  Align: =Align.Center
+                  VerticalAlign: =VerticalAlign.Middle
+                  Wrap: =false
+                  PaddingTop: =0
+                  PaddingBottom: =0
+
+      # ────────────────────── THE GRID ──────────────────────
+      #  WrapCount turns one vertical gallery into a grid: 7 across for month and
+      #  week, 1 for day. TemplateSize is the ROW height, so it divides the plot
+      #  by the number of rows the mode produces.
+      - galCal:
+          Control: Gallery
+          Variant: Vertical
+          Properties:
+            X: =16
+            Y: |-
+              =If(varCalMode = "Day", 156, 180)
+            Width: =1334
+            Height: |-
+              =If(varCalMode = "Day", 596, 572)
+            WrapCount: |-
+              =If(varCalMode = "Day", 1, 7)
+            TemplateSize: |-
+              =Switch(varCalMode, "Month", 572 / 6, "Week", 572, 596)
+            TemplatePadding: =0
+            ShowScrollbar: =true
+            ShowNavigation: =false
+            Selectable: =false
+            DelayItemLoading: =false
+            AccessibleLabel: |-
+              ="Engagement calendar"
+            Items: =colCalDays
+          Children:
+            - recCellBg:
+                Control: Rectangle
+                Properties:
+                  X: =0
+                  Y: =0
+                  Width: =Parent.TemplateWidth
+                  Height: =Parent.TemplateHeight
+                  # Days outside the anchored month are greyed rather than hidden:
+                  # an activity on the 1st of next month is still worth seeing.
+                  Fill: |-
+                    =If(
+                        ThisItem.D = Today(),
+                        RGBA(255, 251, 235, 1),
+                        If(ThisItem.InMonth, RGBA(255, 255, 255, 1), ClrFilterBg)
+                     )
+                  BorderColor: =ClrBorder
+                  BorderThickness: =1
+
+            - lblCellDate:
+                Control: Label
+                Properties:
+                  Font: =BrandFont
+                  X: =4
+                  Y: =2
+                  Width: =Parent.TemplateWidth - 34
+                  Height: =20
+                  Text: |-
+                    =Text(ThisItem.D, "dd/mm/yyyy")
+                  Size: =9
+                  FontWeight: |-
+                    =If(ThisItem.D = Today(), FontWeight.Bold, FontWeight.Semibold)
+                  Color: |-
+                    =If(ThisItem.D = Today(), ClrToday, If(ThisItem.InMonth, ClrText, ClrMuted))
+                  VerticalAlign: =VerticalAlign.Middle
+                  Wrap: =false
+                  PaddingTop: =0
+                  PaddingBottom: =0
+                  PaddingLeft: =0
+
+            # Adds an activity already dated to the cell that was clicked.
+            - icoCellAdd:
+                Control: Classic/Icon
+                Properties:
+                  Icon: =Icon.Add
+                  X: =Parent.TemplateWidth - 24
+                  Y: =4
+                  Width: =16
+                  Height: =16
+                  Color: =ClrMuted
+                  Tooltip: |-
+                    ="Add an activity on this day"
+                  AccessibleLabel: |-
+                    ="Add an activity on this day"
+                  OnSelect: |-
+                    =Set(varNewDate, ThisItem.D);
+                    Set(varAddReset, false);
+                    Set(varShowAdd, true);
+                    Navigate(scrTimeline, ScreenTransition.None)
+
+            #  A day cell lists every activity whose interval COVERS that day, not
+            #  only those starting on it — a three-day event appears on all three
+            #  days, which is what a calendar is for.
+            - galCellItems:
+                Control: Gallery
+                Variant: Vertical
+                Properties:
+                  X: =2
+                  Y: =22
+                  Width: =Parent.TemplateWidth - 4
+                  Height: =Parent.TemplateHeight - 24
+                  TemplateSize: =18
+                  TemplatePadding: =1
+                  ShowScrollbar: =true
+                  ShowNavigation: =false
+                  Selectable: =false
+                  DelayItemLoading: =false
+                  Items: |-
+                    =SortByColumns(
+                         Filter(colCal, StartD <= ThisItem.D && EndD >= ThisItem.D),
+                         "StartD", SortOrder.Ascending
+                     )
+                Children:
+                  - recItemBg:
+                      Control: Rectangle
+                      Properties:
+                        X: =0
+                        Y: =0
+                        Width: =Parent.TemplateWidth
+                        Height: =Parent.TemplateHeight
+                        Fill: |-
+                          =ColorValue(Coalesce(ThisItem.CatColour, "#E9EDF2"))
+
+                  - lblItemText:
+                      Control: Label
+                      Properties:
+                        Font: =BrandFont
+                        X: =3
+                        Y: =0
+                        Width: =Parent.TemplateWidth - 6
+                        Height: =Parent.TemplateHeight
+                        Text: =ThisItem.CellText
+                        Size: =8
+                        Color: |-
+                          =ColorValue(Coalesce(ThisItem.CatText, "#20304A"))
+                        VerticalAlign: =VerticalAlign.Middle
+                        Wrap: =false
+                        PaddingTop: =0
+                        PaddingBottom: =0
+                        PaddingLeft: =0
+                        PaddingRight: =0
+                        Tooltip: =ThisItem.CellTip
+                        OnSelect: =Set(varSelected, ThisItem)

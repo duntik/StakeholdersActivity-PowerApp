@@ -1,0 +1,11 @@
+Name,Colour Hex,Text Colour Hex,Sort Order,Active
+Communications,#D3E4FF,#1E3D60,10,Yes
+Community Engagement,#E7DEFF,#3E3560,20,Yes
+Consents and Environment,#FFD7F4,#542E4F,30,Yes
+Supply Chain,#FFDADA,#5F2C2F,40,Yes
+Corporate Affairs,#FFDCC4,#5A310C,50,Yes
+Early Career Attraction,#F7E297,#473A00,60,Yes
+Local Authority,#CDECB3,#2A4219,70,Yes
+Project Delivery,#B1EFDB,#004437,80,Yes
+Social Value,#B0ECFC,#00424E,90,Yes
+N/A,#ECEDEF,#44474E,9999,Yes

@@ -1,0 +1,14 @@
+{
+  "name": "stakeholder-lookahead-palette",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Regenerates the Material 3 colour tokens and theme.yaml of the app from one seed colour.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "generate": "node generate.mjs"
+  },
+  "dependencies": {
+    "@material/material-color-utilities": "0.2.7"
+  }
+}

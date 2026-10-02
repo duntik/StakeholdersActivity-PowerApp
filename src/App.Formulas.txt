@@ -1,0 +1,157 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  SEL Lookahead Timeline — App.Formulas property
+//
+//  Select the App node in the tree, pick Formulas from the property list,
+//  select everything, delete it, then paste this whole file.
+//
+//  HARD RULE FOR THIS PROPERTY: nothing here may reference a collection.
+//  Named formulas do not receive a collection's schema, so any formula that
+//  reads colWindow (or any other collection) reports "name isn't recognized"
+//  for every one of its columns, and every formula downstream fails with it.
+//  Everything derived from colWindow therefore lives in collections built by
+//  btnApplyFilters on scrTimeline, not here.
+//
+//  App.OnStart is not used and must be left empty.
+//
+//  Paste this before any screen: every screen references the names below.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════ Canvas geometry (1366 x 768) ═══════════
+LabelW   = 172;    // width of the left category-name column
+PlotX    = 180;    // absolute X of the plot area left edge
+PlotW    = 1152;   // plot area width
+RowMinH  = 56;     // minimum height of a category row
+LaneH    = 24;     // height of one marker lane inside a row
+TopY     = 198;    // top of the timeline area
+PlotH    = 560;    // timeline area height
+
+// Reserved; not referenced by any screen. The marker galleries use
+// TemplateSize = LaneH and lay out one lane per marker themselves.
+MarkerSlot = 1;
+
+// ═══════════ Time window ═══════════
+MonthsVisible = 3;
+
+// The window position is stored as a MONTH OFFSET (a number), not as a date.
+// A date variable would be circular: TimelineStart reads it, and the navigation
+// arrows set it from TimelineStart. Power Fx cannot infer a type through that
+// circle, the variable stays untyped, and every formula reading it fails.
+// A number typed by the literal 0 in Coalesce breaks the circle.
+TimelineStart = DateAdd(
+    Date(Year(Today()), Month(Today()), 1),
+    Coalesce(varMonthOffset, 0),
+    TimeUnit.Months
+);
+TimelineEnd   = DateAdd(TimelineStart, MonthsVisible, TimeUnit.Months);
+TimelineDays  = DateDiff(TimelineStart, TimelineEnd, TimeUnit.Days);   // 89..92
+PxPerDay      = PlotW / TimelineDays;                                  // ~12.6 px per day
+
+// How many records the window ACTUALLY holds — counted server-side, not capped
+// by the data row limit. Comparing it with CountRows(colWindow) detects a
+// truncated result at any Data row limit setting, including a forgotten 500.
+// A hardcoded ">= 2000" check would not.
+WindowServerCount =
+    CountIf(
+        'SEL Engagement Activities',
+        'Start Date' <  TimelineEnd,
+        'End Date'   >= TimelineStart
+    );
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  DESIGN SYSTEM — Material 3
+//
+//  Every colour below is derived from ONE seed colour with Google's
+//  material-color-utilities. To re-brand the app, run tools/palette/generate.mjs
+//  with a new seed and paste its output over this block. Screens never
+//  reference these Md* tokens directly — they use the role names further down
+//  — so the whole app re-themes from this one file.
+//
+//  Current seed: #2C6BAC
+// ═══════════════════════════════════════════════════════════════════════════
+
+//  Your organisation's name, shown in the header and on printed reports.
+BrandName = "Your Organisation";
+
+//  Applied to every text control. Segoe UI is installed on every Windows machine;
+//  replace it with your brand typeface if it is available to all users.
+BrandFont = "Segoe UI";
+
+// ───── M3 colour roles ─────
+//  Primary uses tone 30 for top bars and tone 40 for filled actions: both carry
+//  white text above the 4.5 WCAG AA threshold.
+MdPrimary               = RGBA(0, 72, 128, 1);            // #004880  top bars
+MdOnPrimary             = RGBA(255, 255, 255, 1);         // #FFFFFF
+MdPrimaryAction         = RGBA(18, 96, 164, 1);           // #1260A4  filled actions
+MdPrimaryContainer      = RGBA(211, 228, 255, 1);         // #D3E4FF
+MdOnPrimaryContainer    = RGBA(0, 28, 56, 1);             // #001C38
+
+MdSecondary             = RGBA(84, 95, 112, 1);           // #545F70
+MdSecondaryContainer    = RGBA(215, 227, 248, 1);         // #D7E3F8
+MdOnSecondaryContainer  = RGBA(16, 28, 43, 1);            // #101C2B
+
+MdTertiary              = RGBA(108, 86, 119, 1);          // #6C5677
+MdTertiaryContainer     = RGBA(244, 217, 255, 1);         // #F4D9FF
+MdOnTertiaryContainer   = RGBA(38, 20, 49, 1);            // #261431
+
+MdError                 = RGBA(186, 26, 26, 1);           // #BA1A1A
+MdErrorContainer        = RGBA(255, 218, 214, 1);         // #FFDAD6
+MdOnErrorContainer      = RGBA(65, 0, 2, 1);              // #410002
+
+MdSurface               = RGBA(248, 249, 255, 1);         // #F8F9FF
+MdOnSurface             = RGBA(25, 28, 32, 1);            // #191C20  body text
+MdSurfaceVariant        = RGBA(223, 226, 235, 1);         // #DFE2EB
+MdOnSurfaceVariant      = RGBA(67, 71, 78, 1);            // #43474E  captions
+MdSurfaceContainerLow   = RGBA(242, 243, 250, 1);         // #F2F3FA
+MdSurfaceContainer      = RGBA(236, 237, 244, 1);         // #ECEDF4
+MdSurfaceContainerHigh  = RGBA(231, 232, 238, 1);         // #E7E8EE
+MdOutline               = RGBA(115, 119, 127, 1);         // #73777F
+MdOutlineVariant        = RGBA(195, 198, 207, 1);         // #C3C6CF
+
+// ───── M3 shape scale, in pixels ─────
+ShapeXS = 4; ShapeSm = 8; ShapeMd = 12; ShapeLg = 16; ShapeXL = 28;
+
+// ───── M3 type scale, converted from dp to points at 4:3 ─────
+TypeHeadline = 18; TypeTitleLg = 16; TypeTitle = 12;
+TypeBody     = 11; TypeLabel   = 9;  TypeLabelSm = 8;
+
+// ───── Role names the screens use ─────
+//  Changing the design means changing the right-hand side of these lines.
+ClrHeader    = MdPrimary;
+ClrAccent    = MdPrimaryAction;
+ClrSurface   = MdSurface;
+ClrFilterBg  = MdSurfaceContainerLow;
+ClrHeadBand  = MdSurfaceContainer;
+ClrBorder    = MdOutlineVariant;
+ClrGrid      = RGBA(255, 255, 255, 1);
+ClrText      = MdOnSurface;
+ClrMuted     = MdOnSurfaceVariant;
+ClrRed       = MdError;
+ClrToday     = MdError;
+ClrDisabled  = MdSurfaceVariant;
+ClrOnDark    = MdOnPrimary;
+
+//  Marker fill by engagement method.
+HexMeeting = "#1260A4";   // meetings
+HexEvent   = "#6C5677";   // public events
+
+//  A description of the active filters, printed in the PDF header — without it an
+//  exported timeline cannot be interpreted.
+//
+//  Reads the shared filter VARIABLES, not the dropdown controls. A formula that
+//  reads controls is tied to one screen and breaks when those controls change
+//  type; the variables are the filter state itself.
+ActiveFilterText =
+    With(
+        { parts:
+            Concat(
+                Filter(
+                    [ varFProgramme, varFProject, varFStakeholder,
+                      varFSite, varFLAA, varFDelivery ],
+                    !IsBlank(Value)
+                ),
+                Value,
+                "  ·  "
+            )
+        },
+        If(IsBlank(parts), "No filters applied", parts)
+    );
